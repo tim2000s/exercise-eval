@@ -1,0 +1,15 @@
+{
+  "name": "exercise-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based evaluation of exercise in type 1 diabetes. Development tooling only; the published site loads vendored libraries and has no runtime npm dependency.",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "vendor": "node tools/vendor.js"
+  },
+  "devDependencies": {
+    "sql.js": "1.13.0",
+    "fflate": "0.8.2"
+  }
+}

@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+scratch/
+*.zip
+*.db
+sample-data/private/
