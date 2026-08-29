@@ -248,11 +248,13 @@ document.title = results.every((r) => r.ok) ? 'ALL PASS' : 'FAILURES';
 // When this page is served from a deployed site, the results still come back to the local
 // harness, whose origin is given in the query string.
 const reportTo = new URLSearchParams(location.search).get('report') || '/__results';
+// text/plain keeps this a simple request, so no preflight is issued when the page is served
+// from a different origin than the harness.
 await fetch(reportTo, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'text/plain' },
   body: JSON.stringify(results),
-});
+}).catch(() => {});
 </script>
 </body>
 </html>

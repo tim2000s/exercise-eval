@@ -19,11 +19,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
     def do_POST(self):
         if self.path == "/__results":
             length = int(self.headers.get("Content-Length", 0))
             RESULTS.write_bytes(self.rfile.read(length))
             self.send_response(204)
+            self._cors()
             self.end_headers()
         else:
             self.send_error(404)
