@@ -8,3 +8,4 @@ scratch/
 *.zip
 *.db
 sample-data/private/
+.pytest_cache/
