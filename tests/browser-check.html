@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Browser checks</title>
+</head>
+<body>
+<pre id="results">running</pre>
+<div id="chart-target"></div>
+<script type="module">
+// Checks that only a real browser can make: that the ES module graph resolves, that the
+// vendored SQLite and zip libraries load and work, that the chart produces valid SVG, and
+// that the Python engine loads under Pyodide and returns the same answer it returns under
+// CPython. Node tests cover the logic; this covers the parts Node cannot.
+
+const results = [];
+const record = (name, ok, detail = '') => results.push({ name, ok, detail: String(detail) });
+
+async function check(name, fn) {
+  try {
+    const detail = await fn();
+    record(name, true, detail ?? '');
+  } catch (e) {
+    record(name, false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e);
+  }
+}
+
+const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
+
+// Surface anything the page throws outside a check, which is how a broken import shows up.
+window.addEventListener('error', (e) => record('uncaught error', false, e.message));
+window.addEventListener('unhandledrejection', (e) => record('unhandled rejection', false, e.reason));
+
+const base = new URL('../', import.meta.url);
+
+await check('every module in the graph imports', async () => {
+  const mods = await Promise.all([
+    import(new URL('js/parsers/exercise-types.js', base)),
+    import(new URL('js/parsers/detect.js', base)),
+    import(new URL('js/parsers/healthconnect-sqlite.js', base)),
+    import(new URL('js/parsers/tabular.js', base)),
+    import(new URL('js/parsers/fit.js', base)),
+    import(new URL('js/parsers/xml-activities.js', base)),
+    import(new URL('js/nightscout.js', base)),
+    import(new URL('js/charts.js', base)),
+    import(new URL('js/import.js', base)),
+    import(new URL('js/pyodide-bridge.js', base)),
+  ]);
+  return `${mods.length} modules`;
+});
+
+const { detectFormat } = await import(new URL('js/parsers/detect.js', base));
+const { importFile } = await import(new URL('js/import.js', base));
+const { parseGpx, parseTcx } = await import(new URL('js/parsers/xml-activities.js', base));
+const { sessionChart, attachHover, summaryTable } = await import(new URL('js/charts.js', base));
+
+let hcData = null;
+
+await check('the Health Connect zip is unzipped and its SQLite database read, in the browser', async () => {
+  const res = await fetch(new URL('tests/fixtures/health_connect_export.zip', base));
+  assert(res.ok, `fixture fetch returned ${res.status}`);
+  const blob = await res.blob();
+  const file = new File([blob], 'Health Connect.zip', { type: 'application/zip' });
+
+  const sniffed = detectFormat(new Uint8Array(await file.slice(0, 8192).arrayBuffer()), file.name);
+  assert(sniffed.kind === 'health-connect-zip', `sniffed as ${sniffed.kind}`);
+
+  hcData = await importFile(file, () => {});
+  assert(hcData.sessions.length === 4, `expected 4 sessions, got ${hcData.sessions.length}`);
+  assert(hcData.sessions[0].typeName === 'RUNNING', hcData.sessions[0].typeName);
+  assert(hcData.sessions[0].hr.length > 100, 'no heart rate attached');
+  assert(hcData.meta.dbVersion === 14, `db version ${hcData.meta.dbVersion}`);
+  return `${hcData.sessions.length} sessions, ${hcData.meta.hrSampleTotal} heart rate samples`;
+});
+
+await check('the FIT decoder runs in the browser', async () => {
+  const res = await fetch(new URL('tests/fixtures/activity.fit', base));
+  const file = new File([await res.blob()], 'activity.fit');
+  const d = await importFile(file, () => {});
+  assert(d.sessions.length === 1, `${d.sessions.length} sessions`);
+  assert(d.sessions[0].distanceM === 8100, `distance ${d.sessions[0].distanceM}`);
+  return `${d.sessions[0].typeName}, ${d.sessions[0].durationMin} min`;
+});
+
+await check('GPX and TCX parse with the browser DOMParser', async () => {
+  const gpx = `<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"
+    xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+    <trk><name>Test</name><type>running</type><trkseg>
+    <trkpt lat="51.5" lon="-0.12"><ele>10</ele><time>2026-08-03T18:00:00Z</time>
+      <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>140</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+    <trkpt lat="51.51" lon="-0.12"><ele>20</ele><time>2026-08-03T18:10:00Z</time>
+      <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>150</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+    </trkseg></trk></gpx>`;
+  const g = parseGpx(gpx);
+  assert(g.sessions.length === 1, 'no gpx session');
+  assert(g.sessions[0].distanceM > 900 && g.sessions[0].distanceM < 1300,
+    `distance ${g.sessions[0].distanceM} m, expected about 1.1 km`);
+  assert(g.sessions[0].hr.length === 2, `hr points ${g.sessions[0].hr.length}`);
+  assert(g.sessions[0].elevationM === 10, `elevation ${g.sessions[0].elevationM}`);
+
+  const tcx = `<?xml version="1.0"?><TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+    <Activities><Activity Sport="Biking"><Lap><Calories>300</Calories><DistanceMeters>12000</DistanceMeters>
+    <Track><Trackpoint><Time>2026-08-03T18:00:00Z</Time><HeartRateBpm><Value>130</Value></HeartRateBpm></Trackpoint>
+    <Trackpoint><Time>2026-08-03T18:30:00Z</Time><HeartRateBpm><Value>145</Value></HeartRateBpm></Trackpoint>
+    </Track></Lap></Activity></Activities></TrainingCenterDatabase>`;
+  const t = parseTcx(tcx);
+  assert(t.sessions.length === 1, 'no tcx session');
+  assert(t.sessions[0].typeName === 'BIKING', t.sessions[0].typeName);
+  assert(t.sessions[0].activeKcal === 300, `kcal ${t.sessions[0].activeKcal}`);
+  return 'gpx and tcx both parsed';
+});
+
+await check('a malformed XML file is refused with a message rather than crashing', async () => {
+  let threw = false;
+  try { parseGpx('<gpx><trk><unclosed>'); } catch (e) { threw = /could not be parsed/.test(e.message); }
+  assert(threw, 'malformed GPX did not produce a clear error');
+  return 'refused cleanly';
+});
+
+await check('the chart renders as valid SVG with the expected structure', async () => {
+  const t0 = Date.UTC(2026, 7, 3, 17, 0);
+  const entries = [];
+  for (let i = 0; i < 12 * 8; i++) {
+    entries.push({ t: t0 + i * 5 * 60000, mmol: 8 - 3 * Math.sin(i / 20) });
+  }
+  const html = sessionChart({
+    entries,
+    hr: entries.slice(12, 21).map((e, i) => ({ t: e.t, bpm: 140 + i })),
+    treatments: [{ t: t0 + 30 * 60000, carbsG: 20, insulinU: 2.5 }],
+    sessionStart: t0 + 60 * 60000, sessionEnd: t0 + 105 * 60000,
+    windowStart: t0, windowEnd: t0 + 8 * 3600000, units: 'mmol',
+  });
+  const host = document.getElementById('chart-target');
+  host.innerHTML = html;
+  const svg = host.querySelector('svg');
+  assert(svg, 'no svg produced');
+  assert(host.querySelector('.series-glucose'), 'no glucose trace');
+  assert(host.querySelector('.series-hr'), 'no heart rate trace');
+  assert(host.querySelector('.marker-carb'), 'no carbohydrate marker');
+  assert(host.querySelector('.band-hypo'), 'no hypoglycaemia band');
+  assert(host.querySelector('.hover-target'), 'no hover layer');
+  // A path whose d attribute contains NaN renders as nothing at all, and does so silently.
+  for (const p of host.querySelectorAll('path')) {
+    assert(!/NaN|Infinity|undefined/.test(p.getAttribute('d') || ''),
+      `path contains a non-finite coordinate: ${p.getAttribute('d').slice(0, 80)}`);
+  }
+  attachHover(host);
+  assert(host.querySelector('.hover-target').dataset.wired === '1', 'hover not wired');
+  return `${svg.querySelectorAll('*').length} svg elements`;
+});
+
+await check('an empty glucose series produces a message rather than a broken chart', async () => {
+  const html = sessionChart({
+    entries: [], hr: [], treatments: [],
+    sessionStart: 0, sessionEnd: 1000, windowStart: 0, windowEnd: 2000, units: 'mmol',
+  });
+  assert(/chart-empty/.test(html), 'empty series did not produce the empty-state message');
+  return 'empty state shown';
+});
+
+await check('the summary table renders every window including missing ones', async () => {
+  const html = summaryTable([
+    { label: 'session', n: 10, coverage: 1, first_mmol: 8, nadir_mmol: 4, peak_mmol: 9,
+      mean_mmol: 6.5, time_below_l1: 0, time_in_range: 1, hypo_events: 0 },
+    null,
+    { label: 'overnight', n: 0, coverage: 0, first_mmol: null, nadir_mmol: null, peak_mmol: null,
+      mean_mmol: null, time_below_l1: 0, time_in_range: 0, hypo_events: 0 },
+  ], 'mmol');
+  assert(/<table/.test(html) && /overnight/.test(html), 'table not rendered');
+  assert(!/null|undefined|NaN/.test(html), 'table leaked a null into the output');
+  return 'table renders with em dashes for missing values';
+});
+
+// The end-to-end check. This is the one that proves the science actually runs where it has to.
+await check('Pyodide loads and the Python engine returns the same answer as CPython', async () => {
+  const { analyse } = await import(new URL('js/pyodide-bridge.js', base));
+
+  const day = Date.UTC(2026, 7, 3, 0, 0);
+  const H = 3600000;
+  const sStart = day + 18 * H;
+  const sEnd = sStart + 45 * 60000;
+
+  // The unadjusted evening run from the Python fixtures, rebuilt here so the two runtimes are
+  // compared on identical input.
+  const g = (h) => {
+    if (h < 17.0) return 7.5 + 0.8 * Math.sin(h / 2);
+    if (h < 18.0) return 9.5;
+    if (h < 18.75) return 9.5 - 6.0 * ((h - 18.0) / 0.75);
+    if (h < 20.0) return 3.5 + 3.4 * ((h - 18.75) / 1.25);
+    if (h < 26.0) return 6.9 - 0.35 * (h - 20.0);
+    if (h < 29.0) return 4.8 - 1.4 * Math.sin(((h - 26.0) / 3.0) * Math.PI);
+    return 4.5 + 0.5 * (h - 29.0);
+  };
+  const entries = [];
+  for (let i = 0; i < (34 * 60) / 5; i++) {
+    const t = day + i * 5 * 60000;
+    entries.push({ t, mmol: g((t - day) / H) });
+  }
+  const hr = [];
+  for (let i = 0; i < 270; i++) hr.push({ t: sStart + i * 10000, bpm: 150 + 5 * Math.sin(i / 6) });
+
+  const report = await analyse({
+    sessions: [{ id: 'run-1', start: sStart, end: sEnd, typeName: 'RUNNING',
+                 modality: 'aerobic', title: 'Evening run', hr }],
+    entries,
+    treatments: [{ kind: 'dose', t: sStart - 90 * 60000, insulinU: 6.0, carbsG: 60,
+                   automatic: false, eventType: 'Meal Bolus' }],
+    profile: { name: 'Test', units: 'mmol', dia: 5.0,
+               basal: [{ secondsFromMidnight: 0, value: 1.0 }],
+               carbRatio: [{ secondsFromMidnight: 0, value: 10.0 }],
+               isf: [{ secondsFromMidnight: 0, value: 2.0 }] },
+    settings: { age_years: 45, body_mass_kg: 78, resting_hr: 52, units: 'mmol',
+                risk_group: 'low' },
+  }, () => {});
+
+  assert(report.sessions.length === 1, 'no session returned');
+  const keys = new Set(report.sessions[0].findings.map((f) => f.key));
+  // The same assertions the CPython suite makes, so a divergence between runtimes is visible.
+  for (const expected of ['hypo-during', 'overnight-hypo', 'basal-none', 'no-temp-target']) {
+    assert(keys.has(expected), `missing finding ${expected}; got ${[...keys].join(', ')}`);
+  }
+  assert(report.bibliography.length > 0, 'no bibliography');
+  assert(report.sessions[0].intensity.basis === 'measured', 'heart rate was not used');
+  const during = report.sessions[0].glucose.during;
+  assert(during.nadir_mmol < 3.9, `nadir ${during.nadir_mmol}`);
+  return `${keys.size} findings, ${report.bibliography.length} sources cited, nadir ` +
+         `${during.nadir_mmol.toFixed(1)} mmol/L`;
+});
+
+document.getElementById('results').textContent = JSON.stringify(results, null, 1);
+document.title = results.every((r) => r.ok) ? 'ALL PASS' : 'FAILURES';
+// Hand the results back to the server that served this page, so the harness terminates on a
+// real signal rather than on a timer.
+await fetch('/__results', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(results),
+});
+</script>
+</body>
+</html>

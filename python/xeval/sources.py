@@ -266,6 +266,182 @@ SOURCES: dict[str, Source] = dict(
             "Biosensors 2020;10:138. PMID 33003524",
             2020, "trial", 24, "Adults on MDI, Dexcom G6, in-clinic sessions of 30 min",
         ),
+        # Insulin adjustment
+        _s(
+            "rabasa2001",
+            "Rabasa-Lhoret R, Bourque J, Ducros F, Chiasson JL. Guidelines for premeal insulin "
+            "dose reduction for postprandial exercise of different intensities and durations in "
+            "type 1 diabetic subjects treated intensively with a basal-bolus insulin regimen. "
+            "Diabetes Care 2001;24:625-630. PMID 11315820",
+            2001, "trial", 8,
+            "Men only, six per exercise arm. Women were excluded because of the effect of "
+            "menstrual cyclicity on glucose homeostasis, so the bolus reduction table was "
+            "derived entirely in men. Only four of its six cells were tested",
+        ),
+        _s(
+            "mcauley2016",
+            "McAuley SA, Horsburgh JC, Ward GM, et al. Insulin pump basal adjustment for "
+            "exercise in type 1 diabetes: a randomised crossover study. "
+            "Diabetologia 2016;59:1636-1644. PMID 27168135",
+            2016, "trial", 14,
+            "Adults on pump therapy, fasted, with venous sampling every 15 minutes",
+        ),
+        _s(
+            "mcauley2017",
+            "McAuley SA, Ward GM, Horsburgh JC, et al. Insulin pump basal rate adjustments: "
+            "time to steady state. Diabet Med 2017;34:1158-1164. PMID 28453877",
+            2017, "trial", 12, "Adults on pump therapy, sampling to 300 minutes",
+        ),
+        _s(
+            "royfleming2019",
+            "Roy-Fleming A, Taleb N, Messier V, et al. Timing of insulin basal rate reduction "
+            "to reduce hypoglycemia during late post-prandial exercise in adults with type 1 "
+            "diabetes using insulin pump therapy. Diabetes Metab 2019;45:294-300. PMID 30165156",
+            2019, "trial", 22,
+            "Adults, 45 min at 60 percent VO2peak three hours after lunch. The primary "
+            "outcome was null",
+        ),
+        _s(
+            "zaharieva2019basal",
+            "Zaharieva DP, McGaugh S, Pooni R, et al. Improved open-loop glucose control with "
+            "basal insulin reduction 90 minutes before aerobic exercise in patients with type 1 "
+            "diabetes on continuous subcutaneous insulin infusion. "
+            "Diabetes Care 2019;42:824-831. PMID 30796112",
+            2019, "trial", 17,
+            "Adults on pumps with no insulin on board at exercise onset, 60 min treadmill at "
+            "about 50 percent VO2peak",
+        ),
+        _s(
+            "heinemann2009",
+            "Heinemann L, Nosek L, Kapitza C, et al. Changes in basal insulin infusion rates "
+            "with subcutaneous insulin infusion: time until a change in metabolic effect is "
+            "induced. Diabetes Care 2009;32:1437-1439. PMID 19487635",
+            2009, "clamp", 10, "Men with type 1 diabetes, euglycaemic clamp",
+        ),
+        _s(
+            "direcnet2006",
+            "DirecNet Study Group, Tsalikian E, Kollman C, et al. Prevention of hypoglycemia "
+            "during exercise in children with type 1 diabetes by suspending basal insulin. "
+            "Diabetes Care 2006;29:2200-2204. PMID 17003293",
+            2006, "trial", 49,
+            "Children and adolescents aged 8 to 17 on pumps, with the last bolus about four "
+            "hours earlier so the rapid-acting depot was small",
+        ),
+        _s(
+            "campbell2013",
+            "Campbell MD, Walker M, Trenell MI, et al. Large pre- and postexercise rapid-acting "
+            "insulin reductions preserve glycemia and prevent early- but not late-onset "
+            "hypoglycemia in patients with type 1 diabetes. "
+            "Diabetes Care 2013;36:2217-2224. PMID 23514728",
+            2013, "trial", 11, "Men on multiple daily injections, morning exercise",
+        ),
+        _s(
+            "heise2017",
+            "Heise T, Zijlstra E, Nosek L, et al. Pharmacological properties of faster-acting "
+            "insulin aspart vs insulin aspart in patients with type 1 diabetes receiving "
+            "continuous subcutaneous insulin infusion. "
+            "Diabetes Obes Metab 2017;19:208-215. PMID 27709762",
+            2017, "clamp", 48, "Adults with type 1 diabetes, pump-delivered bolus",
+        ),
+        # Automated insulin delivery
+        _s(
+            "tagougui2020",
+            "Tagougui S, Taleb N, Legault L, et al. A single-blind, randomised, crossover study "
+            "to reduce hypoglycaemia risk during postprandial exercise with closed-loop insulin "
+            "delivery in adults with type 1 diabetes. Diabetologia 2020;63:2282-2291. "
+            "PMID 32740723",
+            2020, "trial", 37,
+            "Adults, exercise 90 minutes after breakfast with an active meal bolus",
+        ),
+        _s(
+            "mccarthy2023",
+            "McCarthy OM, Christensen MB, Kristensen KB, et al. Glycemic responses to exercise "
+            "in adults with type 1 diabetes using an automated insulin delivery system. "
+            "Diabetes Technol Ther 2023;25:476-484. PMID 37053529",
+            2023, "trial", 10,
+            "Adults on the MiniMed 780G, exercise 90 minutes after a carbohydrate drink",
+        ),
+        _s(
+            "turner2025",
+            "Turner LV, Sherr JL, Zaharieva DP, et al. Activity feature use before exercise in "
+            "adults and youth using an automated insulin delivery system. "
+            "Diabetes Care 2025;48:1598-1606. PMID 40680105",
+            2025, "trial", 38,
+            "Adults and young people on Omnipod 5, exercising at least three hours after the "
+            "last bolus. The primary outcome was null",
+        ),
+        _s(
+            "morrison2025",
+            "Morrison DJ, Vogrin S, Zaharieva DP, et al. Timing of temporary target activation "
+            "before exercise in adults using automated insulin delivery. "
+            "Diabetes Obes Metab 2025;27:5160-5170. PMID 40566793",
+            2025, "trial", 26,
+            "Adults on the MiniMed 780G, 16 randomised bouts each, at least three hours after "
+            "a meal. Median time below range was zero in every arm",
+        ),
+        _s(
+            "moser2025",
+            "Moser O, Zaharieva DP, Adolfsson P, et al. The use of automated insulin delivery "
+            "around physical activity and exercise in type 1 diabetes: position statement of "
+            "the EASD and ISPAD. Diabetologia 2025;68:255-280. PMID 39653802",
+            2025, "guideline", None,
+            "Adults and children on automated insulin delivery. Graded A to D",
+            grade="A",
+        ),
+        # Carbohydrate and the expected response
+        _s(
+            "garciagarcia2015",
+            "Garcia-Garcia F, Kumareswaran K, Hovorka R, Hernando ME. Quantifying the acute "
+            "changes in glucose with exercise in type 1 diabetes: a systematic review and "
+            "meta-analysis. Sports Med 2015;45:587-599. PMID 25616852",
+            2015, "observational", None,
+            "Meta-analysis of ten studies with digitised population glucose profiles. Mostly "
+            "laboratory conditions with insulin on board",
+        ),
+        _s(
+            "francescato2004",
+            "Francescato MP, Geat M, Fusi S, et al. Carbohydrate requirement and insulin "
+            "concentration during moderate exercise in type 1 diabetic patients. "
+            "Metabolism 2004;53:1126-1130",
+            2004, "trial", 12,
+            "Adults, 1 h constant-workload cycling at four intervals after the morning dose, "
+            "with carbohydrate titrated to prevent hypoglycaemia",
+        ),
+        _s(
+            "broz2021",
+            "Broz J, Campbell MD, Urbanova J, et al. Characterization of individualized "
+            "glycemic excursions during a standardized bout of hypoglycemia-inducing exercise "
+            "and subsequent hypoglycemia treatment. Nutrients 2021;13:4165",
+            2021, "trial", 10,
+            "Men on pump therapy. The only study of hypoglycaemia treatment around exercise, "
+            "and the glucose was given once exercise had already stopped",
+        ),
+        _s(
+            "dube2005",
+            "Dube MC, Weisnagel SJ, Prud'homme D, Lavoie C. Exercise and newer insulins: how "
+            "much glucose supplement to avoid hypoglycemia? "
+            "Med Sci Sports Exerc 2005;37:1276-1282",
+            2005, "trial", 9,
+            "Adults, 60 min at 50 percent VO2max three hours after breakfast",
+        ),
+        _s(
+            "t1dexi_matched2025",
+            "Glucose-lowering effects of physical activity in type 1 diabetes: a causal "
+            "modelling and matched-pair analysis. Diabetes Obes Metab 2025. PMC12628732",
+            2025, "observational", 482,
+            "1,546 real-world bouts of 10 to 30 minutes from T1DEXI and T1DEXIP, matched on "
+            "starting glucose, rate of change, insulin on board and glucose variability",
+        ),
+        _s(
+            "scott2021",
+            "Scott SN, Fontana FY, Cocks M, et al. Post-exercise recovery for the endurance "
+            "athlete with type 1 diabetes: a consensus statement. "
+            "Lancet Diabetes Endocrinol 2021;9:304-317. PMID 33864810",
+            2021, "consensus", None,
+            "Endurance athletes. The statement notes that no measurement of post-exercise "
+            "glycogen resynthesis has been made in anyone with type 1 diabetes, so its figures "
+            "are transferred from athletes without diabetes",
+        ),
     ]
 )
 

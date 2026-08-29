@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exercise evaluation for type 1 diabetes</title>
+<meta name="description" content="Reads your own Nightscout and activity data in the browser and
+  compares each exercise session against the published guidance on exercise in type 1 diabetes.">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🏃</text></svg>">
+</head>
+<body data-palette="#2a78d6,#eb6834,#1baf7a">
+
+<header class="page-header">
+  <div class="wrap">
+    <h1>Exercise evaluation for type 1 diabetes</h1>
+    <p class="lede">
+      Reads a Nightscout site and an activity file, then compares what happened around each
+      exercise session against the published guidance. Everything runs in this browser. No data
+      is uploaded anywhere, and there is no server to send it to.
+    </p>
+    <div class="notice" role="note">
+      <strong>This is not medical advice.</strong>
+      It reads a record after the event and compares it against population-level guidance,
+      without knowing your history, your insulin sensitivity, what else was happening that day,
+      or what your clinical team has told you. Much of the guidance it quotes is expert consensus
+      rather than trial evidence, and each finding says which it is. Discuss any change to your
+      insulin or your food with the team who look after your diabetes.
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="step" id="step-nightscout">
+    <h2><span class="step-n">1</span> Your Nightscout site</h2>
+    <div class="field-row">
+      <label class="field">
+        <span>Nightscout address</span>
+        <input type="url" id="ns-url" placeholder="https://yoursite.example.com"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field narrow">
+        <span>Read-only token <em>(only if needed)</em></span>
+        <input type="text" id="ns-token" placeholder="leave blank on most sites"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field narrow">
+        <span>How far back</span>
+        <select id="ns-days">
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="180">180 days</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="ns-connect" class="primary">Fetch my data</button>
+      <span class="hint" id="ns-status"></span>
+    </div>
+    <details class="help">
+      <summary>The site has to allow this page to read it, and most do not by default</summary>
+      <p>
+        A browser will not let one website read another unless the second one says it may. A stock
+        Nightscout sends no such header, so the fetch fails before any data is read. The site owner
+        adds one word to a setting they already have:
+      </p>
+      <pre><code>ENABLE=<em>&lt;whatever is already there&gt;</em> cors
+CORS_ALLOW_ORIGIN=*</code></pre>
+      <p>
+        Then restart the service. Setting <code>CORS_ALLOW_ORIGIN</code> without adding
+        <code>cors</code> to <code>ENABLE</code> does nothing, and does so silently, which is the
+        usual reason a second attempt fails the same way as the first.
+      </p>
+      <p>
+        The token is only needed where the site is not readable without one. Most Nightscout sites
+        allow anonymous reads, so leave it blank and try first. If you do need one, create a
+        read-only subject token in Admin Tools rather than using the API secret, which cannot be
+        sent from a browser at all.
+      </p>
+    </details>
+  </section>
+
+  <section class="step" id="step-file">
+    <h2><span class="step-n">2</span> Your activity data</h2>
+    <div id="dropzone" class="dropzone" tabindex="0" role="button"
+         aria-label="Choose or drop an activity file">
+      <p><strong>Drop a file here</strong>, or click to choose one.</p>
+      <p class="hint">
+        The Health Connect export zip, a SQLite database, a Strava or Garmin archive, or an
+        individual FIT, TCX, GPX, CSV or JSON file. More than one file can be added, and
+        duplicate sessions are dropped.
+      </p>
+      <input type="file" id="file-input" multiple hidden
+             accept=".zip,.db,.sqlite,.fit,.tcx,.gpx,.csv,.json,.txt">
+    </div>
+    <ul id="file-list" class="file-list"></ul>
+    <details class="help">
+      <summary>Where the Health Connect export comes from, and what is in it</summary>
+      <p>
+        On Android, Health Connect writes a scheduled export to a cloud storage app of your
+        choosing. There is no on-demand export: set up a daily, weekly or monthly schedule, then
+        collect the file from wherever it was written. It is named <code>Health Connect.zip</code>
+        unless you renamed it at setup.
+      </p>
+      <p>
+        The file is not encrypted, despite a claim to the contrary that circulates widely. It holds
+        one plain SQLite database, which is why this page can read it. It also retains your GPS
+        route data at full precision. Nothing leaves this browser here, but that is worth knowing
+        before you share the file anywhere else.
+      </p>
+    </details>
+  </section>
+
+  <section class="step" id="step-settings">
+    <h2><span class="step-n">3</span> About you</h2>
+    <p class="hint">
+      Every one of these is optional. Each one that is left blank makes some part of the analysis
+      less certain, and the report says which part.
+    </p>
+    <div class="field-row">
+      <label class="field narrow"><span>Age, years</span>
+        <input type="number" id="set-age" min="4" max="100" step="1" placeholder="e.g. 45"></label>
+      <label class="field narrow"><span>Body mass, kg</span>
+        <input type="number" id="set-mass" min="15" max="250" step="0.5" placeholder="e.g. 78"></label>
+      <label class="field narrow"><span>Resting heart rate</span>
+        <input type="number" id="set-resting" min="30" max="120" step="1" placeholder="e.g. 52"></label>
+      <label class="field narrow"><span>Maximum heart rate <em>(if measured)</em></span>
+        <input type="number" id="set-maxhr" min="120" max="230" step="1" placeholder="estimated from age"></label>
+    </div>
+    <div class="field-row">
+      <label class="field narrow"><span>Display glucose in</span>
+        <select id="set-units">
+          <option value="mmol" selected>mmol/L</option>
+          <option value="mgdl">mg/dL</option>
+        </select></label>
+      <label class="field"><span>Hypoglycaemia risk group</span>
+        <select id="set-risk">
+          <option value="low" selected>Low: aware of hypos, few lows, none severe recently</option>
+          <option value="moderate">Moderate: some loss of awareness, or frequent lows</option>
+          <option value="high">High: impaired awareness, or a severe hypo in the last six months</option>
+        </select></label>
+      <label class="field narrow"><span>Rapid-acting insulin</span>
+        <select id="set-insulin">
+          <option value="75" selected>Aspart, lispro or glulisine</option>
+          <option value="55">Fiasp or Lyumjev</option>
+        </select></label>
+    </div>
+    <details class="help">
+      <summary>What the risk group changes</summary>
+      <p>
+        It shifts every glucose threshold in the report. The EASD and ISPAD position statement
+        grades hypoglycaemia risk from awareness, then from time below 3.9 mmol/L (70 mg/dL) over
+        three months, then from whether a severe episode occurred in the last six months. Each step
+        up raises the carbohydrate threshold during exercise from 7.0 to 8.0 to 9.0 mmol/L (126 to
+        145 to 161 mg/dL), and the floor for the first ninety minutes afterwards from 4.4 to 5.0 to
+        5.6 mmol/L (80 to 90 to 100 mg/dL).
+      </p>
+    </details>
+  </section>
+
+  <section class="step" id="step-run">
+    <h2><span class="step-n">4</span> Run the analysis</h2>
+    <div class="actions">
+      <button id="run" class="primary" disabled>Evaluate my sessions</button>
+      <span class="hint" id="run-status">Fetch your Nightscout data and add an activity file first.</span>
+    </div>
+    <div id="progress" class="progress" hidden><div class="progress-bar"></div></div>
+    <p class="hint" id="engine-note">
+      The first run downloads the Python analysis engine, which is around 10 MB. The science is
+      written in Python and served as readable files under <code>python/xeval/</code>, so any
+      number in the report can be traced back to the code that produced it and to the paper that
+      it came from.
+    </p>
+  </section>
+
+  <section id="results" hidden>
+    <h2>Results</h2>
+    <div id="summary"></div>
+    <div id="sessions"></div>
+    <details class="help" id="bibliography-block">
+      <summary>Everything this report cited</summary>
+      <div id="bibliography"></div>
+    </details>
+  </section>
+
+  <section class="step" id="log-block" hidden>
+    <h2>What happened</h2>
+    <ul id="log" class="log"></ul>
+  </section>
+
+</main>
+
+<footer class="page-footer wrap">
+  <p>
+    Source, method and the literature this is built on are in the repository. The guideline
+    numbers live in <code>python/xeval/guidelines.py</code>, each pointing at an entry in
+    <code>python/xeval/sources.py</code> that records the study design, the number of
+    participants and the population it was measured in.
+  </p>
+  <p>
+    Person-first language throughout, following the NHS Language Matters guidance.
+  </p>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

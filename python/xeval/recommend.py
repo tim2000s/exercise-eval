@@ -74,12 +74,14 @@ def recommend(
     f += _starting_glucose(glucose, intensity, risk_group, u)
     f += _hypoglycaemia(glucose, intensity, u)
     f += _antecedent_risk(glucose, u)
+    f += _expected_response(glucose, intensity, iob_at_start, u)
     f += _basal(basal, intensity, session)
-    f += _bolus(boluses, intensity)
+    f += _bolus(boluses, intensity, session)
     f += _iob(iob_at_start, cob_at_start, glucose, intensity)
-    f += _carbohydrate(glucose, intensity, body_mass_kg, is_child, u)
+    f += _carbohydrate(glucose, intensity, body_mass_kg, is_child, iob_at_start, u)
+    f += _hypo_treatment(glucose, body_mass_kg, u)
     f += _overnight(glucose, session, intensity, basal, u)
-    f += _temp_target(temp_target, session)
+    f += _temp_target(temp_target, session, iob_at_start, glucose, u)
     f += _sensor_caveats(glucose, intensity, u)
 
     f.sort(key=lambda x: x.sort_key())
@@ -254,6 +256,125 @@ def _antecedent_risk(g: SessionGlucose, u: str) -> list[Finding]:
     )]
 
 
+def _expected_response(g: SessionGlucose, intensity, iob: dict, u: str) -> list[Finding]:
+    """Compare the measured change against the published expectation for this kind of session.
+
+    The expectation is quoted as an interval rather than a point, because the pooled confidence
+    intervals are wide and the same person repeating the same session is only weakly predictive
+    of themselves. Where the observed change sits outside the interval, that is worth knowing;
+    where it sits inside, so is that, and neither is a judgement about the session.
+    """
+    d = g.during
+    if d.change_mmol is None or not d.is_reliable:
+        return []
+    duration_h = (d.end_ms - d.start_ms) / MS_PER_MIN / 60
+    if duration_h < 0.25:
+        return []
+    observed_rate = d.change_mmol / duration_h
+
+    entry = G.EXPECTED_RATE_BY_MODALITY.get(intensity.modality)
+    if entry is None:
+        return []
+    point, (lo, hi), significant = entry
+
+    if not significant:
+        return [Finding(
+            "expected-resistance", "observation",
+            f"Glucose changed by {d.change_mmol:+.1f} mmol/L, which resistance work makes hard "
+            f"to call unusual",
+            observed=f"Over {duration_h * 60:.0f} minutes glucose moved "
+                     f"{d.change_mmol:+.1f} mmol/L, a rate of {observed_rate:+.1f} mmol/L per hour.",
+            guidance="In the pooled analysis, resistance exercise did not differ significantly "
+                     "from rest (p=0.30) and its confidence interval, -7.55 to +2.34 mmol/L per "
+                     "hour, spans zero. There is no published expectation to compare this "
+                     "against.",
+            citations=_cite(G.EXPECTED_RATE_SOURCE),
+            provisional=not intensity.is_measured,
+        )]
+
+    within = lo <= observed_rate <= hi
+    iob_note = ""
+    for lo_u, hi_u, adj, (ci_lo, ci_hi) in G.IOB_DOSE_RESPONSE:
+        if lo_u <= iob["total"] < hi_u:
+            iob_note = (
+                f" With {iob['total']:.1f} U of insulin on board at the start, the measured "
+                f"average change across 2,613 real-world sessions in that band was "
+                f"{adj:+.2f} mmol/L (95 percent CI {ci_lo:+.2f} to {ci_hi:+.2f})."
+            )
+            break
+
+    if within:
+        return [Finding(
+            "expected-within", "observation",
+            f"Glucose fell at {observed_rate:+.1f} mmol/L per hour, within the published range",
+            observed=f"Over {duration_h * 60:.0f} minutes glucose moved "
+                     f"{d.change_mmol:+.1f} mmol/L, a rate of {observed_rate:+.1f} mmol/L per hour.",
+            guidance=f"The pooled figure for {intensity.modality} work is {point:.1f} mmol/L per "
+                     f"hour (95 percent CI {lo:.1f} to {hi:.1f}) under laboratory conditions with "
+                     f"insulin on board. Real-world sessions of 10 to 30 minutes average about "
+                     f"-2.2 mmol/L over the bout, roughly half the laboratory figure.{iob_note}",
+            citations=_cite(G.EXPECTED_RATE_SOURCE, G.REAL_WORLD_CHANGE,
+                            G.IOB_DOSE_RESPONSE_SOURCE),
+            provisional=not intensity.is_measured,
+        )]
+
+    steeper = observed_rate < lo
+    return [Finding(
+        "expected-outside", "observation",
+        f"Glucose {'fell more steeply' if steeper else 'held up better'} than the published "
+        f"range for this kind of session",
+        observed=f"Over {duration_h * 60:.0f} minutes glucose moved {d.change_mmol:+.1f} mmol/L, "
+                 f"a rate of {observed_rate:+.1f} mmol/L per hour, against a pooled expectation "
+                 f"of {point:.1f} (95 percent CI {lo:.1f} to {hi:.1f}).",
+        guidance=(
+            f"{iob_note.strip() or 'Insulin on board at the start was negligible.'} "
+            "The predictors that actually separate sessions, in order, are the rate of change "
+            "before the session, the starting glucose, glucose variability, the duration and "
+            "insulin on board. Activity type and intensity did not reach significance at all in "
+            "the analysis that ranked them. The same session repeated is only weakly predictive "
+            "of itself: the intraclass correlation across repeats is 0.12, and ten men on an "
+            "identical protocol fell at between 4.4 and 10.0 mmol/L per hour."
+        ),
+        action="One session outside the range is not a pattern. The comparison across sessions "
+               "at the top of this report is the place to look for one.",
+        citations=_cite(G.EXPECTED_RATE_SOURCE, G.PREDICTOR_RANKING,
+                        G.WITHIN_PERSON_VARIABILITY),
+        provisional=not intensity.is_measured,
+    )]
+
+
+def _hypo_treatment(g: SessionGlucose, body_mass_kg, u: str) -> list[Finding]:
+    """Whether carbohydrate taken to treat a low was enough, given what it can be expected to do."""
+    d = g.during
+    if d.nadir_mmol is None or d.nadir_mmol >= HYPO_L1_MMOL:
+        return []
+    taken = g.carbs_during_g + g.carbs_recovery_g
+    if taken <= 0:
+        return []
+
+    weight_based = (f"{G.WEIGHT_BASED_HYPO_TREATMENT.value * body_mass_kg:.0f} g"
+                    if body_mass_kg else "0.3 g per kg of body mass")
+    return [Finding(
+        "hypo-treatment", "observation",
+        f"{taken:.0f} g of carbohydrate was taken around the low",
+        observed=f"The nadir was {fmt(d.nadir_mmol, u)} and {taken:.0f} g was logged during the "
+                 f"session and the 90 minutes after it.",
+        guidance=(
+            f"Twenty grams given at the moment exercise stopped raised glucose by "
+            f"1.0 ± 0.29 mmol/L at 15 minutes, with the first 1 mmol/L taking 16.5 ± 5.4 minutes "
+            f"and the peak coming at 40 minutes. At rest, 15 g raises glucose by about 1.2 to "
+            f"1.3 mmol/L at 10 to 15 minutes. The commonly quoted 2.1 mmol/L from 15 g cannot be "
+            f"traced to a primary measurement. Weight-based dosing beat a fixed 15 g by "
+            f"0.26 mmol/L at 10 minutes, which for you would be about {weight_based}."
+        ),
+        action="No measurement exists of how much glucose rises per gram while exercise "
+               "continues. Every published figure was taken at rest or after stopping, so the "
+               "amounts above are extrapolations into the situation they are most used in.",
+        citations=_cite(G.HYPO_TREATMENT_RISE, G.WEIGHT_BASED_HYPO_TREATMENT,
+                        G.HYPO_TREATMENT_UNDER_EXERCISE),
+    )]
+
+
 def _basal(basal, intensity, session) -> list[Finding]:
     if basal.fraction_of_profile is None:
         return [Finding(
@@ -296,28 +417,93 @@ def _basal(basal, intensity, session) -> list[Finding]:
                 if basal.lead_time_min >= 0
                 else f"{-basal.lead_time_min:.0f} minutes after the session had started")
         findings.append(Finding(
-            "basal-late", "adjustment", "The basal reduction started late",
+            "basal-late", "adjustment", "The basal reduction started too late to have acted",
             observed=f"The reduction began {when}.",
             guidance=(
-                "A basal reduction acts on the insulin already in the subcutaneous depot, so it "
-                "takes time to change circulating insulin. Reductions started at the beginning "
-                "of a session have little effect during it."
+                "Lead time is not a refinement here, it is the whole mechanism. Halving a basal "
+                "rate one hour before exercise removed 4.9 percent of circulating free insulin "
+                "by the time exercise began, and the fall did not reach significance until 75 "
+                "minutes. An 80 percent reduction 40, 20 or 0 minutes before showed no "
+                "difference on its primary outcome. A 50 or 80 percent reduction 90 minutes "
+                "before left 1 of 17 people hypoglycaemic, against 7 of 17 when the pump was "
+                "suspended at the start."
             ),
-            action="Starting the same reduction earlier would deliver most of its effect during "
-                   "the session rather than after it.",
-            citations=_cite(G.OVERNIGHT_BASAL_REDUCTION),
+            action=(
+                "The same reduction 90 minutes earlier is the single change with the most "
+                "evidence behind it. It cannot be made up for afterwards: an increase in basal "
+                "reaches 80 percent of its new steady state in about 170 minutes, while a "
+                "reduction does not get there within 300."
+            ),
+            citations=_cite(G.BASAL_LEAD_TIME, G.BASAL_LEAD_TIME_FLOOR, G.BASAL_ASYMMETRY),
+        ))
+    if basal.mechanism == "temp basal" and basal.fraction_of_profile is not None \
+            and basal.fraction_of_profile <= 0.05:
+        findings.append(Finding(
+            "basal-suspended", "observation", "Basal delivery was suspended rather than reduced",
+            observed=basal.detail,
+            guidance=(
+                "Suspending at exercise onset halved hypoglycaemia during exercise, from 43 to "
+                "16 percent, and quadrupled hyperglycaemia afterwards, from 6 to 27 percent. "
+                "Exercise itself raises plasma insulin by about 5 to 8 microunits per mL over "
+                "the first 15 to 30 minutes as depot absorption accelerates, measured even in "
+                "arms where the pump was stopped, so a suspension delivers a smaller and later "
+                "fall in insulin than its nominal 100 percent implies."
+            ),
+            action="The consensus prefers a reduction started earlier to a suspension started "
+                   "late, and caps a suspension at under two hours.",
+            citations=_cite(G.PUMP_SUSPENSION, G.EXERCISE_RAISES_INSULIN),
         ))
     return findings
 
 
-def _bolus(boluses: list, intensity) -> list[Finding]:
+def _bolus(boluses: list, intensity, session) -> list[Finding]:
+    """Assess each meal bolus shortly before the session against the published reduction table.
+
+    The table is keyed on fraction of VO2max and duration. Fraction of heart rate reserve stands
+    in for it, which is the Karvonen assumption and close enough for a table quantised at 25
+    percentage points, but it means a session with no heart rate gets no comparison at all
+    rather than a guessed one.
+    """
     if not boluses:
         return []
+
+    duration_min = (session["end"] - session["start"]) / MS_PER_MIN
+    target = G.bolus_reduction_for(intensity.mean_hrr, duration_min) if intensity.is_measured else None
+
     out = []
     for b in boluses:
         if b.reduction_fraction is None:
             continue
-        pct = b.reduction_fraction * 100
+        actual = b.reduction_fraction
+        pct = actual * 100
+
+        if target is None or target["reduction"] is None:
+            recommended_text = (
+                "The published table is keyed on exercise intensity, which cannot be estimated "
+                "for this session without heart rate."
+                if target is None else target["note"]
+            )
+            suffix = ""
+        else:
+            rec = target["reduction"]
+            recommended_text = (
+                f"For work at about {target['vo2'] * 100:.0f} percent of VO2max lasting "
+                f"{target['duration']} minutes, begun within about 90 minutes of the meal, the "
+                f"published reduction is {rec * 100:.0f} percent."
+            )
+            if not target["measured"]:
+                recommended_text += " " + target["note"]
+            gap = actual - rec
+            if abs(gap) < 0.15:
+                suffix = " That is close to the published figure."
+            elif gap < 0:
+                suffix = (f" The dose given was {abs(gap) * 100:.0f} percentage points less "
+                          f"reduced than that.")
+            else:
+                suffix = (f" The dose given was {gap * 100:.0f} percentage points more reduced "
+                          f"than that.")
+            recommended_text += suffix
+
         if pct >= 15:
             out.append(Finding(
                 f"bolus-reduced-{int(b.at_ms)}", "observation",
@@ -326,25 +512,39 @@ def _bolus(boluses: list, intensity) -> list[Finding]:
                 observed=f"{b.carbs_g:.0f} g of carbohydrate was covered with "
                          f"{b.insulin_given_u:.1f} U where the profile ratio implies "
                          f"{b.insulin_expected_u:.1f} U.",
-                guidance="Reducing the bolus for a meal eaten shortly before exercise is the "
-                         "standard adjustment for a session within the action of that dose.",
-                action="",
-                citations=_cite(G.OVERNIGHT_BASAL_REDUCTION),
+                guidance=recommended_text + " " + b.caveat,
+                action=(
+                    "A reduced bolus does not slow the fall during exercise. In every arm of the "
+                    "trial the table comes from, the fall was the same size on a reduced dose as "
+                    "on a full one; what changed was that glucose was higher when exercise "
+                    "began, so the same fall landed somewhere safer. The cost is a larger "
+                    "postprandial rise beforehand."
+                ),
+                citations=_cite(G.BOLUS_REDUCTION_SOURCE, G.BOLUS_REDUCTION_MECHANISM),
                 provisional=True,
             ))
-            out[-1].guidance += " " + b.caveat
-        elif pct <= 5 and b.minutes_before <= 150:
+        elif pct <= 5 and b.minutes_before <= 180:
+            severity = "risk" if (target and (target["reduction"] or 0) >= 0.5) else "adjustment"
             out.append(Finding(
-                f"bolus-full-{int(b.at_ms)}", "adjustment",
+                f"bolus-full-{int(b.at_ms)}", severity,
                 f"A full meal bolus was given {b.minutes_before:.0f} minutes before the session",
                 observed=f"{b.carbs_g:.0f} g of carbohydrate was covered with "
                          f"{b.insulin_given_u:.1f} U, which is what the profile ratio implies.",
-                guidance="A meal bolus given within the two to three hours before exercise is "
-                         "still substantially active during it, and circulating insulin is what "
-                         "converts exercise into a fall in glucose. " + b.caveat,
-                action="Reducing this bolus is usually more effective than adding carbohydrate "
-                       "during the session, because it acts on the cause rather than the effect.",
-                citations=(),
+                guidance=(
+                    recommended_text + " " +
+                    "The arm of that trial testing an hour at half of VO2max on a full "
+                    "breakfast bolus was abandoned: three of four participants needed "
+                    "intravenous dextrose and the fourth finished at 3.5 mmol/L. Across the "
+                    "trial, reducing the dose cut hypoglycaemia from 64 to 16 episodes per 100 "
+                    "exercising sessions. " + b.caveat
+                ),
+                action=(
+                    "Reducing this bolus acts on the cause rather than the effect, and it works "
+                    "by raising the level exercise starts from rather than by making the fall "
+                    "gentler."
+                ),
+                citations=_cite(G.BOLUS_REDUCTION_SOURCE, G.BOLUS_FULL_DOSE_HAZARD,
+                                G.BOLUS_REDUCTION_MECHANISM),
                 provisional=True,
             ))
     return out
@@ -383,7 +583,8 @@ def _iob(iob: dict, cob: float, g: SessionGlucose, intensity) -> list[Finding]:
     return out
 
 
-def _carbohydrate(g: SessionGlucose, intensity, body_mass_kg, is_child, u: str) -> list[Finding]:
+def _carbohydrate(g: SessionGlucose, intensity, body_mass_kg, is_child, iob: dict,
+                  u: str) -> list[Finding]:
     d = g.during
     duration_min = (d.end_ms - d.start_ms) / MS_PER_MIN
     taken = g.carbs_during_g
@@ -393,6 +594,21 @@ def _carbohydrate(g: SessionGlucose, intensity, body_mass_kg, is_child, u: str) 
 
     # The two guideline families give carbohydrate in different currencies and diverge at the
     # extremes, so both are computed and both are shown.
+    # Carbohydrate requirement scales with the insulin still active far more strongly than with
+    # anything about the exercise itself, so that gradient is stated before the guideline bands.
+    iob_note = ""
+    if body_mass_kg and iob["total"] > 0.2:
+        need_low = 0.3 * body_mass_kg
+        need_high = 1.0 * body_mass_kg
+        iob_note = (
+            f" Requirement scales with the insulin still active rather than with the exercise: "
+            f"measured at a fixed workload it ran from 0.63 g/kg an hour after a dose to "
+            f"0.14 g/kg at five and a half hours, a four-fold gradient. For you that is roughly "
+            f"{need_low:.0f} g per hour more than two hours after a bolus and up to "
+            f"{need_high:.0f} g per hour with a bolus still peaking. There was "
+            f"{iob['total']:.1f} U on board when this session began."
+        )
+
     per_kg_note = ""
     if body_mass_kg:
         capped = min(body_mass_kg, G.ISPAD_WEIGHT_CAP_KG.value)
@@ -423,12 +639,13 @@ def _carbohydrate(g: SessionGlucose, intensity, body_mass_kg, is_child, u: str) 
                 "At a threshold of 7.0 mmol/L (126 mg/dL) during exercise the published "
                 "amounts are 10 to 15 g with a level arrow, 15 to 25 g taken immediately with a "
                 "slight downward arrow, and 20 to 35 g with a steeper one, repeated every 15 to "
-                "20 minutes." + per_kg_note
+                "20 minutes." + per_kg_note + iob_note
             ),
             action="Carbohydrate taken during the session, or a larger insulin reduction before "
                    "it, would both have flattened this. Which is preferable depends on whether "
                    "the session was planned.",
-            citations=_cite(G.CARB_BY_TREND_SOURCE, G.ISPAD_WEIGHT_CAP_KG),
+            citations=_cite(G.CARB_BY_TREND_SOURCE, G.ISPAD_WEIGHT_CAP_KG,
+                            G.CARB_BY_TIME_SINCE_INSULIN_SOURCE),
         )]
     if taken > 0:
         return [Finding(
@@ -439,8 +656,8 @@ def _carbohydrate(g: SessionGlucose, intensity, body_mass_kg, is_child, u: str) 
                      f"{d.change_mmol:+.1f} mmol/L.",
             guidance="The published amounts during exercise are 10 to 15 g with a level arrow, "
                      "rising to 20 to 35 g with a falling one, repeated every 15 to 20 minutes."
-                     + per_kg_note,
-            citations=_cite(G.CARB_BY_TREND_SOURCE),
+                     + per_kg_note + iob_note,
+            citations=_cite(G.CARB_BY_TREND_SOURCE, G.CARB_BY_TIME_SINCE_INSULIN_SOURCE),
         )]
     return []
 
@@ -512,41 +729,103 @@ def _overnight(g: SessionGlucose, session, intensity, basal, u: str) -> list[Fin
     return out
 
 
-def _temp_target(tt: dict | None, session) -> list[Finding]:
+def _temp_target(tt: dict | None, session, iob: dict, g: SessionGlucose,
+                 u: str) -> list[Finding]:
+    """Whether the session was announced, and whether announcing it would have mattered.
+
+    The trial evidence splits cleanly on one variable. Announcing a session helps when a meal
+    bolus is still active and does not measurably help when it is not: the two trials with a
+    large effect placed exercise 90 minutes after a meal, and the two null trials placed it at
+    least three hours after the last bolus, where time below range was already zero. Raising the
+    target changes only future automated delivery, which is a small lever against insulin
+    already in the tissue. So the tool asks how much insulin was on board before it says whether
+    announcing would have helped.
+    """
+    prandial = iob["manual"] >= 0.75
+
     if tt is None:
+        if prandial:
+            return [Finding(
+                "no-temp-target", "adjustment",
+                "The session was not announced, and a meal bolus was still active",
+                observed=f"No temporary target covered this session, and {iob['manual']:.1f} U "
+                         f"of manually given insulin was still active when it began.",
+                guidance=(
+                    "This is the situation where announcing measurably helps. With exercise 90 "
+                    "minutes after a meal, time below range fell from 13.0 to 7.0 percent on "
+                    "announcement alone, and to 2.0 percent when a 33 percent bolus reduction "
+                    "was added. On a closed loop, a raised target is what actually changes the "
+                    "algorithm's behaviour; a care portal exercise event records the intention "
+                    "and changes nothing."
+                ),
+                action=(
+                    "Set the target before the session rather than at its start. Nothing shorter "
+                    "than 60 minutes of lead time has shown a benefit in any randomised "
+                    "comparison, and the consensus asks for 60 to 120 minutes."
+                ),
+                citations=_cite(G.AID_ANNOUNCEMENT_EVIDENCE, G.AID_LEAD_TIME),
+            )]
         return [Finding(
-            "no-temp-target", "adjustment", "The session was not announced with a temporary target",
-            observed="No temporary target covered this session.",
-            guidance="On a closed loop, a raised target is what actually changes the algorithm's "
-                     "behaviour. A care portal exercise event records the intention but changes "
-                     "nothing.",
-            action="Setting an activity target before the session, rather than at its start, "
-                   "gives the system time to act on it.",
+            "no-temp-target-low-iob", "observation",
+            "The session was not announced, but little insulin was on board",
+            observed=f"No temporary target covered this session. Insulin on board at the start "
+                     f"was {iob['total']:.1f} U.",
+            guidance=(
+                "Announcing a session begun at least three hours after the last bolus has twice "
+                "failed to show a benefit: in 38 adults time below range was 4.5 percent with an "
+                "hour of notice against 6.1 percent with none (p=0.40), and in 26 adults across "
+                "16 randomised bouts each the median time below range was zero whether the "
+                "target was set 60 minutes ahead, 20 minutes ahead, at the start, or not at all."
+            ),
+            action=(
+                "Announcing a session that was not going to cause a problem has a cost. Before "
+                "morning moderate exercise, setting the target an hour ahead gave 15.7 "
+                "percentage points less time in range than not setting it at all."
+            ),
+            citations=_cite(G.AID_ANNOUNCEMENT_EVIDENCE, G.AID_ANNOUNCEMENT_COST),
         )]
+
     if tt["announced_as_exercise"]:
         lead = tt["lead_time_min"]
         when = (f"{lead:.0f} minutes before the session"
                 if lead >= 0 else f"{-lead:.0f} minutes after it started")
+        target_text = (f"{fmt(tt['target_mmol'], u)}" if tt.get("target_mmol") else "a raised target")
         f = Finding(
             "temp-target", "observation", "The session was announced as activity",
-            observed=f"An activity temporary target of "
-                     f"{tt['target_mmol']:.1f} mmol/L was set {when}, lasting "
+            observed=f"An activity target of {target_text} was set {when}, lasting "
                      f"{tt['duration_min']:.0f} minutes.",
-            guidance="This is the strongest available signal that the session was announced to "
-                     "the system, because it is what changed the algorithm's behaviour rather "
-                     "than only recording an intention.",
+            guidance=(
+                "This is the strongest available signal that the session was announced to the "
+                "system, because it is what changed the algorithm's behaviour rather than only "
+                "recording an intention. On AndroidAPS a target above 5.6 mmol/L (100 mg/dL) "
+                "also stops super micro boluses, overrides the autosens ratio for its duration, "
+                "and raises the threshold at which the loop zero-temps by about 1.1 mmol/L."
+            ),
+            citations=_cite(G.AAPS_TEMP_TARGET_EFFECTS),
         )
-        if lead < 30:
-            f.action = ("The target was set close to the session start. A longer lead time gives "
-                        "the system time to reduce delivery before the work begins.")
+        if lead < 60:
             f.severity = "adjustment"
+            f.action = (
+                f"The target went on {when}. Nothing shorter than 60 minutes of lead time has "
+                f"shown a hypoglycaemia benefit in any randomised comparison, and the consensus "
+                f"asks for 60 to 120 minutes. "
+                + ("A meal bolus was still active here, which is the situation where the lead "
+                   "time matters most." if prandial else
+                   "Little insulin was on board here, which is the situation where announcing "
+                   "has repeatedly failed to show a benefit, so this may not have cost anything.")
+            )
+            f.citations = _cite(G.AID_LEAD_TIME, G.AID_ANNOUNCEMENT_EVIDENCE,
+                                G.AAPS_TEMP_TARGET_EFFECTS)
         return [f]
+
     return [Finding(
         "temp-target-other", "observation",
         f"A temporary target was active, set for {tt['reason']} rather than activity",
         observed=f"A temporary target with reason {tt['reason']} covered the session.",
-        guidance="A target set for another reason still raises the loop's target, but it is not "
-                 "a record that exercise was announced.",
+        guidance="A target set for another reason still raises the loop's target, and on "
+                 "AndroidAPS still suppresses super micro boluses, but it is not a record that "
+                 "exercise was announced.",
+        citations=_cite(G.AAPS_TEMP_TARGET_EFFECTS),
     )]
 
 
