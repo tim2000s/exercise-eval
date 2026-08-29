@@ -14,15 +14,30 @@
 // CPython. Node tests cover the logic; this covers the parts Node cannot.
 
 const results = [];
-const record = (name, ok, detail = '') => results.push({ name, ok, detail: String(detail) });
+const record = (name, ok, detail = '', skipped = false) =>
+  results.push({ name, ok, detail: String(detail), skipped });
+
+/** Thrown by a check whose input is not present, which is not the same as a failure. */
+class Missing extends Error {}
 
 async function check(name, fn) {
   try {
     const detail = await fn();
     record(name, true, detail ?? '');
   } catch (e) {
-    record(name, false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e);
+    if (e instanceof Missing) record(name, true, e.message, true);
+    else record(name, false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e);
   }
+}
+
+/** Fetch a test fixture, or skip the check if this deployment does not carry it. */
+async function fixture(path) {
+  const res = await fetch(new URL(path, base));
+  if (res.status === 404) {
+    throw new Missing(`${path} is not published here; the fixtures are generated locally`);
+  }
+  if (!res.ok) throw new Error(`${path} returned ${res.status}`);
+  return res;
 }
 
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
@@ -57,8 +72,7 @@ const { sessionChart, attachHover, summaryTable } = await import(new URL('js/cha
 let hcData = null;
 
 await check('the Health Connect zip is unzipped and its SQLite database read, in the browser', async () => {
-  const res = await fetch(new URL('tests/fixtures/health_connect_export.zip', base));
-  assert(res.ok, `fixture fetch returned ${res.status}`);
+  const res = await fixture('tests/fixtures/health_connect_export.zip');
   const blob = await res.blob();
   const file = new File([blob], 'Health Connect.zip', { type: 'application/zip' });
 
@@ -74,7 +88,7 @@ await check('the Health Connect zip is unzipped and its SQLite database read, in
 });
 
 await check('the FIT decoder runs in the browser', async () => {
-  const res = await fetch(new URL('tests/fixtures/activity.fit', base));
+  const res = await fixture('tests/fixtures/activity.fit');
   const file = new File([await res.blob()], 'activity.fit');
   const d = await importFile(file, () => {});
   assert(d.sessions.length === 1, `${d.sessions.length} sessions`);
@@ -231,7 +245,10 @@ document.getElementById('results').textContent = JSON.stringify(results, null, 1
 document.title = results.every((r) => r.ok) ? 'ALL PASS' : 'FAILURES';
 // Hand the results back to the server that served this page, so the harness terminates on a
 // real signal rather than on a timer.
-await fetch('/__results', {
+// When this page is served from a deployed site, the results still come back to the local
+// harness, whose origin is given in the query string.
+const reportTo = new URLSearchParams(location.search).get('report') || '/__results';
+await fetch(reportTo, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(results),

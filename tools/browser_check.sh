@@ -11,6 +11,9 @@ cd "$(dirname "$0")/.."
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 [ -x "$CHROME" ] || { echo "Google Chrome not found at $CHROME"; exit 2; }
 
+# BASE_URL checks a deployed site instead of a local one. The page posts its results back to
+# the local server either way, so the harness still terminates on a real signal.
+BASE_URL=${BASE_URL:-}
 PORT=${PORT:-8731}
 RESULTS=$(mktemp -t browsercheck)
 python3 tools/check_server.py "$PORT" "$RESULTS" &
@@ -26,7 +29,8 @@ done
 
 "$CHROME" --headless --disable-gpu --no-sandbox --no-first-run --disable-dev-shm-usage \
   --user-data-dir="$PROFILE" \
-  "http://127.0.0.1:$PORT/tests/browser-check.html" >/dev/null 2>&1 &
+  "${BASE_URL:-http://127.0.0.1:$PORT}/tests/browser-check.html?report=http://127.0.0.1:$PORT/__results" \
+  >/dev/null 2>&1 &
 CHROME_PID=$!
 
 DEADLINE=$(( $(date +%s) + ${TIMEOUT:-420} ))
@@ -45,12 +49,15 @@ import json, sys
 results = json.load(open(sys.argv[1]))
 failed = 0
 for r in results:
-    if r["ok"]:
+    if r.get("skipped"):
+        print(f"  skip   {r['name']}  ({r['detail']})")
+    elif r["ok"]:
         print(f"  pass   {r['name']}" + (f"  ({r['detail']})" if r["detail"] else ""))
     else:
         failed += 1
         print(f"  FAIL   {r['name']}\n         {r['detail']}")
 print()
-print(f"{len(results) - failed} of {len(results)} browser checks passed.")
+skipped = sum(1 for r in results if r.get("skipped"))
+print(f"{len(results) - failed - skipped} passed, {skipped} skipped, {failed} failed.")
 sys.exit(1 if failed else 0)
 PY
