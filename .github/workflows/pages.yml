@@ -18,16 +18,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
       - run: npm ci
-      - run: npm test
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install pytest
-      - run: python -m pytest tests/ -q
+      # The binary test fixtures are generated rather than committed, so that the schema the
+      # parsers are tested against stays readable. They have to exist before the JavaScript
+      # tests run.
+      - name: Build test fixtures
+        run: npm run fixtures
+      - name: JavaScript tests
+        run: npm test
+      - name: Analysis engine tests
+        run: python -m pytest tests/ -q
+      - name: The tests must be able to fail
+        run: python tools/mutation_check.py
   deploy:
     needs: test
     runs-on: ubuntu-latest
