@@ -185,6 +185,69 @@ await check('the summary table renders every window including missing ones', asy
   return 'table renders with em dashes for missing values';
 });
 
+await check('the page itself loads and wires up without error', async () => {
+  // Everything above tests modules in isolation. This loads index.html as the browser actually
+  // loads it, so a syntax error in app.js, a selector that matches nothing, or an element the
+  // wiring expects and the markup does not have, shows up here rather than in front of a user.
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1024px;height:768px;border:0;position:absolute;left:-9999px';
+  const errors = [];
+  const target = new URL('index.html', base).toString();
+  // The source is set before the frame is attached. Attaching an unset iframe fires a load
+  // event for about:blank, and waiting on that returns an empty document that satisfies
+  // nothing; the first version of this check failed for exactly that reason.
+  frame.src = target;
+  const loaded = new Promise((resolve, reject) => {
+    frame.onload = resolve;
+    frame.onerror = () => reject(new Error('index.html failed to load'));
+    setTimeout(() => reject(new Error('index.html did not load within 15 seconds')), 15000);
+  });
+  document.body.appendChild(frame);
+  await loaded;
+  assert(frame.contentWindow.location.href.endsWith('index.html'),
+    `the frame is showing ${frame.contentWindow.location.href}, not index.html`);
+
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  win.addEventListener('error', (e) => errors.push(e.message));
+  win.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+
+  // The module script runs after load, so give it a turn before asserting on its effects.
+  await new Promise((r) => setTimeout(r, 400));
+
+  for (const id of ['ns-url', 'ns-token', 'ns-days', 'ns-connect', 'dropzone', 'file-input',
+                    'set-age', 'set-mass', 'set-resting', 'set-maxhr', 'set-units', 'set-risk',
+                    'set-insulin', 'run', 'run-status', 'results', 'summary', 'sessions',
+                    'bibliography', 'log', 'progress']) {
+    assert(doc.getElementById(id), `index.html has no element with id "${id}"`);
+  }
+
+  const run = doc.getElementById('run');
+  assert(run.disabled, 'the analyse button should start disabled');
+  assert(/Fetch your Nightscout data/i.test(doc.getElementById('run-status').textContent),
+    `unexpected initial status: ${doc.getElementById('run-status').textContent}`);
+  assert(doc.getElementById('results').hidden, 'results should start hidden');
+
+  // The drop zone has to be wired, since it is the only route to a file on a touch device.
+  const dz = doc.getElementById('dropzone');
+  dz.dispatchEvent(new win.DragEvent('dragover', { bubbles: true, cancelable: true }));
+  assert(dz.classList.contains('over'), 'the drop zone did not respond to a drag');
+  dz.dispatchEvent(new win.DragEvent('dragleave', { bubbles: true, cancelable: true }));
+  assert(!dz.classList.contains('over'), 'the drop zone did not reset after the drag left');
+
+  // Both light and dark palettes must be defined, not just one with the other inherited.
+  const styles = [...doc.styleSheets].flatMap((sheet) => {
+    try { return [...sheet.cssRules].map((r) => r.cssText); } catch { return []; }
+  }).join('\n');
+  assert(/--series-1/.test(styles), 'the chart palette is not defined');
+  assert(/prefers-color-scheme:\s*dark/.test(styles), 'no dark mode block');
+  assert(/\[data-theme="dark"\]/.test(styles), 'no explicit dark theme scope');
+
+  frame.remove();
+  assert(errors.length === 0, `the page raised: ${errors.join('; ')}`);
+  return 'all controls present, drop zone wired, both palettes defined';
+});
+
 // The end-to-end check. This is the one that proves the science actually runs where it has to.
 await check('Pyodide loads and the Python engine returns the same answer as CPython', async () => {
   const { analyse } = await import(new URL('js/pyodide-bridge.js', base));

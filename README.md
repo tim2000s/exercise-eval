@@ -143,14 +143,21 @@ npm install          # development only; the published site has no npm dependenc
 npm test             # the JavaScript parsers and the Nightscout client
 python3 -m pytest tests/ -q      # the analysis engine
 python3 tools/mutation_check.py  # checks that those tests can actually fail
-./tools/browser_check.sh         # the real module graph, in headless Chrome
+./tools/browser_check.sh         # the real module graph and the real page, in headless Chrome
+python3 tools/verify_deployment.py  # that the published site is the code all of the above ran on
 ```
 
 The mutation check is there because a test that cannot fail is worse than no test. It breaks the
 implementation in 32 specific ways, each a plausible defect, and reports any that no test
 catches. The browser check covers what the others cannot: that the module graph resolves, that
-the vendored SQLite and zip libraries work, that the charts produce valid SVG, and that the
-Python engine loads under Pyodide and reaches the same answer it reaches under CPython.
+the vendored SQLite and zip libraries work, that the charts produce valid SVG, that the page
+itself loads and wires up, and that the Python engine loads under Pyodide and reaches the same
+answer it reaches under CPython.
+
+The browser check runs against a local copy rather than the published site, because Chrome's
+Private Network Access rules stop a page served from a public origin from reporting back to a
+harness on localhost. `verify_deployment.py` closes that gap from the other direction, by
+comparing every published file against the working tree the checks ran on.
 
 Test fixtures are generated rather than committed as opaque binaries:
 
