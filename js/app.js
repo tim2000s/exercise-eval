@@ -11,13 +11,25 @@ const MS_PER_DAY = 86_400_000;
 
 /** Settings persist between visits; the token deliberately does not. */
 const SETTINGS_KEY = 'exercise-eval.settings.v1';
-const PERSISTED = ['ns-url', 'ns-days', 'set-age', 'set-mass', 'set-resting', 'set-maxhr',
-  'set-units', 'set-risk', 'set-insulin'];
+const PERSISTED = ['ns-url', 'date-from', 'date-to', 'set-age', 'set-mass', 'set-resting',
+  'set-maxhr', 'set-units', 'set-risk', 'set-insulin'];
+
+/**
+ * A day either side of the chosen range is fetched.
+ *
+ * The analysis needs data outside every session: time below range in the 24 hours before is the
+ * strongest predictor it has of post-exercise nocturnal hypoglycaemia, and the delayed risk
+ * period runs 7 to 11 hours afterwards, which for an evening session falls in the following
+ * night. Fetching the range alone would leave both windows empty and the report would quietly
+ * report less than it could.
+ */
+const FETCH_PADDING_MS = MS_PER_DAY;
 
 const state = {
-  nightscout: null,   // { entries, treatments, profile, units, base }
+  nightscout: null,   // { entries, treatments, profile, units, base, range }
   datasets: [],       // one per imported file
   files: [],
+  selected: null,     // Set of session ids, or null before any file has been imported
 };
 
 // ---- logging ---------------------------------------------------------------------------------
@@ -59,6 +71,102 @@ function saveSettings() {
   } catch { /* nothing here is important enough to interrupt the user over */ }
 }
 
+/** Local midnight for a YYYY-MM-DD value from a date input. */
+function dayStart(value) {
+  const [y, m, d] = String(value || '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).getTime();
+}
+
+const isoDay = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * The chosen period, as a half-open interval.
+ *
+ * The end is the midnight after the chosen day, so that a range of one day covers that whole
+ * day rather than collapsing to an instant.
+ */
+function readRange() {
+  const from = dayStart($('date-from').value);
+  const toDay = dayStart($('date-to').value);
+  if (from === null || toDay === null) return null;
+  const to = toDay + MS_PER_DAY;
+  if (to <= from) return null;
+  return { from, to, days: Math.round((to - from) / MS_PER_DAY) };
+}
+
+function setRange(fromMs, toMs) {
+  $('date-from').value = isoDay(fromMs);
+  $('date-to').value = isoDay(toMs);
+  saveSettings();
+  onRangeChanged();
+}
+
+function describeRange() {
+  const range = readRange();
+  const el = $('period-summary');
+  if (!range) {
+    el.textContent = 'Choose a start date on or before the end date.';
+    return null;
+  }
+  const fmt = (ms) => new Date(ms).toLocaleDateString([], {
+    day: 'numeric', month: 'short', year: 'numeric' });
+  el.textContent =
+    `${range.days} day${range.days === 1 ? '' : 's'}, ${fmt(range.from)} to ` +
+    `${fmt(range.to - MS_PER_DAY)}. A day either side of that is fetched as well.`;
+  return range;
+}
+
+/** Mark whichever preset matches the current range, so the buttons reflect the state. */
+function syncPresets() {
+  const range = readRange();
+  for (const b of document.querySelectorAll('button.preset')) {
+    let matches = false;
+    if (range) {
+      const want = presetRange(b.dataset);
+      matches = want && want.from === range.from && want.to === range.to;
+    }
+    b.setAttribute('aria-pressed', matches ? 'true' : 'false');
+  }
+}
+
+function presetRange({ days, month }) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (days) {
+    return { from: today - (Number(days) - 1) * MS_PER_DAY, to: today + MS_PER_DAY };
+  }
+  if (month === 'this') {
+    return { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to: today + MS_PER_DAY };
+  }
+  if (month === 'last') {
+    return {
+      from: new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(),
+      to: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
+    };
+  }
+  return null;
+}
+
+/** Sessions from every imported file whose start falls inside the chosen period. */
+function sessionsInRange() {
+  const range = readRange();
+  const all = mergeDatasets(state.datasets).sessions;
+  if (!range) return { inRange: [], outside: all.length, all };
+  const inRange = all.filter((s) => s.start >= range.from && s.start < range.to);
+  return { inRange, outside: all.length - inRange.length, all };
+}
+
+function onRangeChanged() {
+  describeRange();
+  syncPresets();
+  renderSessionPicker();
+  updateRunButton();
+}
+
 function readSettings() {
   const num = (id) => {
     const v = Number($(id).value);
@@ -88,9 +196,13 @@ async function connectNightscout() {
   try {
     const base = normaliseBase($('ns-url').value);
     const token = $('ns-token').value.trim() || null;
-    const days = Number($('ns-days').value);
-    const endMs = Date.now();
-    const startMs = endMs - days * MS_PER_DAY;
+    const range = readRange();
+    if (!range) throw new Error('Choose a start date on or before the end date first.');
+    const startMs = range.from - FETCH_PADDING_MS;
+    // Never ask for data from the future; a range ending today would otherwise request tomorrow.
+    const endMs = Math.min(Date.now(), range.to + FETCH_PADDING_MS);
+    if (endMs <= startMs) throw new Error('That period is entirely in the future.');
+    const days = range.days;
 
     status.textContent = 'Checking the connection.';
     const info = await probe(base, token);
@@ -130,7 +242,11 @@ async function connectNightscout() {
       log('No profile was returned, so basal and bolus comparisons will not be possible.', 'warn');
     }
 
-    state.nightscout = { entries, treatments, profile, units: info.units, base, days };
+    state.nightscout = { entries, treatments, profile, units: info.units, base, days, range };
+    // Coverage is only knowable once the data is here, so the picker is rebuilt to grey out
+    // anything the fetch did not reach.
+    state.selected = null;
+    renderSessionPicker();
     status.textContent = `${entries.length.toLocaleString()} readings ready.`;
     progress(1);
     setTimeout(() => progress(null), 600);
@@ -159,6 +275,9 @@ async function addFiles(fileList) {
       });
       state.datasets.push(dataset);
       state.files.push(file.name);
+      // A newly imported file's sessions should arrive selected, so re-derive the selection
+      // rather than leaving them unticked behind an unchanged count.
+      state.selected = null;
 
       const n = dataset.sessions.length;
       li.querySelector('.detail').textContent = dataset.source;
@@ -174,21 +293,133 @@ async function addFiles(fileList) {
       log(`${file.name}: ${err.message}`, 'warn');
     }
   }
+  renderSessionPicker();
   updateRunButton();
 }
 
+/**
+ * List the sessions in the chosen period, so specific ones can be picked.
+ *
+ * Everything imported is kept and only the display is filtered, so narrowing the dates does not
+ * mean reading the files again. Sessions the glucose record does not cover are shown but not
+ * selectable, because evaluating one would produce a page of findings that all say the same
+ * thing about missing data.
+ */
+function renderSessionPicker() {
+  const { inRange, outside, all } = sessionsInRange();
+  const step = $('step-sessions');
+
+  if (!all.length) {
+    step.hidden = true;
+    state.selected = null;
+    return;
+  }
+  step.hidden = false;
+
+  const ns = state.nightscout;
+  const covered = (s) => {
+    if (!ns || !ns.entries.length) return true;   // nothing fetched yet, so nothing to exclude
+    return s.end >= ns.entries[0].t && s.start <= ns.entries[ns.entries.length - 1].t;
+  };
+
+  // First render, or a range change that revealed new sessions: select everything usable.
+  if (state.selected === null) {
+    state.selected = new Set(inRange.filter(covered).map((s) => s.id));
+  }
+
+  const dayOf = (ms) => new Date(ms).toLocaleDateString([], {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+  const rows = [];
+  let lastDay = null;
+  for (const s of inRange) {
+    const day = dayOf(s.start);
+    if (day !== lastDay) {
+      rows.push(`<li class="day-heading" role="presentation">${esc(day)}</li>`);
+      lastDay = day;
+    }
+    const usable = covered(s);
+    const detail = [
+      `${Math.round(s.durationMin)} min`,
+      s.distanceM ? `${(s.distanceM / 1000).toFixed(1)} km` : null,
+      s.hr && s.hr.length ? `${s.hr.length} heart rate readings` : 'no heart rate',
+      s.sourceApp,
+    ].filter(Boolean).join(' · ');
+
+    rows.push(`<li class="${usable ? '' : 'no-glucose'}">
+      <label>
+        <input type="checkbox" value="${esc(s.id)}"
+               ${state.selected.has(s.id) ? 'checked' : ''} ${usable ? '' : 'disabled'}>
+        <span class="when">${esc(new Date(s.start).toLocaleTimeString([],
+          { hour: '2-digit', minute: '2-digit' }))}</span>
+        <span class="what">${esc(s.title || titleCase(s.typeName))}</span>
+        <span class="detail">${esc(detail)}</span>
+        ${usable ? '' : '<span class="flag">outside the glucose data fetched</span>'}
+      </label>
+    </li>`);
+  }
+
+  $('session-picker').innerHTML = rows.join('') ||
+    '<li><label><span class="what">No sessions start inside this period.</span></label></li>';
+
+  const selectable = inRange.filter(covered).length;
+  const chosen = inRange.filter((s) => state.selected.has(s.id)).length;
+  $('session-count').textContent =
+    `${chosen} of ${selectable} selected` +
+    (selectable < inRange.length
+      ? `, and ${inRange.length - selectable} outside the glucose data fetched`
+      : '');
+
+  $('session-outside').textContent = outside > 0
+    ? `${outside} further session${outside === 1 ? '' : 's'} in your files fall outside this ` +
+      'period. Widen the dates above to include them.'
+    : '';
+}
+
+function onPickerChange(ev) {
+  const box = ev.target.closest('input[type="checkbox"]');
+  if (!box) return;
+  if (box.checked) state.selected.add(box.value);
+  else state.selected.delete(box.value);
+  renderSessionPicker();
+  updateRunButton();
+}
+
+function selectAll(select) {
+  const { inRange } = sessionsInRange();
+  const ns = state.nightscout;
+  const covered = (s) => !ns || !ns.entries.length ||
+    (s.end >= ns.entries[0].t && s.start <= ns.entries[ns.entries.length - 1].t);
+  state.selected = select ? new Set(inRange.filter(covered).map((s) => s.id)) : new Set();
+  renderSessionPicker();
+  updateRunButton();
+}
+
+/** The sessions that will actually be evaluated. */
+function chosenSessions() {
+  if (!state.selected) return [];
+  return sessionsInRange().inRange.filter((s) => state.selected.has(s.id));
+}
+
 function updateRunButton() {
-  const sessions = mergeDatasets(state.datasets).sessions.length;
-  const ready = Boolean(state.nightscout) && sessions > 0;
+  const chosen = chosenSessions().length;
+  const anyFiles = state.datasets.length > 0;
+  const ready = Boolean(state.nightscout) && chosen > 0;
   $('run').disabled = !ready;
+
   if (ready) {
     $('run-status').textContent =
-      `${sessions} session${sessions === 1 ? '' : 's'} ready to evaluate against ` +
+      `${chosen} session${chosen === 1 ? '' : 's'} ready to evaluate against ` +
       `${state.nightscout.entries.length.toLocaleString()} sensor readings.`;
-  } else if (!state.nightscout && sessions) {
+  } else if (!state.nightscout && anyFiles) {
     $('run-status').textContent = 'Fetch your Nightscout data to continue.';
-  } else if (state.nightscout && !sessions) {
+  } else if (state.nightscout && !anyFiles) {
     $('run-status').textContent = 'Add an activity file to continue.';
+  } else if (anyFiles && !chosen) {
+    $('run-status').textContent = 'Choose at least one session in step 4.';
+  } else {
+    $('run-status').textContent =
+      'Fetch your Nightscout data and add an activity file first.';
   }
 }
 
@@ -204,20 +435,24 @@ async function run() {
 
     const ns = state.nightscout;
     // Only sessions the CGM record actually covers can be evaluated, so the rest are named
-    // rather than silently dropped.
+    // rather than silently dropped. The picker already excludes them, but a range changed after
+    // the fetch can reintroduce one.
     const oldest = ns.entries.length ? ns.entries[0].t : Infinity;
     const newest = ns.entries.length ? ns.entries[ns.entries.length - 1].t : -Infinity;
-    const inRange = merged.sessions.filter((s) => s.end >= oldest && s.start <= newest);
-    const outside = merged.sessions.length - inRange.length;
+    const chosen = chosenSessions();
+    const inRange = chosen.filter((s) => s.end >= oldest && s.start <= newest);
+    const outside = chosen.length - inRange.length;
     if (outside > 0) {
-      log(`${outside} session${outside === 1 ? '' : 's'} fell outside the ${ns.days} days of ` +
-          'Nightscout data fetched, and were left out. Widening the date range would include them.',
-          'warn');
+      log(`${outside} of the chosen session${outside === 1 ? '' : 's'} fell outside the glucose ` +
+          'data fetched, and were left out. Widening the dates and fetching again would include ' +
+          'them.', 'warn');
     }
     if (!inRange.length) {
-      log('No sessions overlap the glucose data, so there is nothing to evaluate.', 'warn');
+      log('None of the chosen sessions overlap the glucose data, so there is nothing to ' +
+          'evaluate.', 'warn');
       return;
     }
+    log(`Evaluating ${inRange.length} session${inRange.length === 1 ? '' : 's'}.`);
 
     const settings = readSettings();
     // The most recent resting heart rate before each session, where the export carried one.
@@ -375,7 +610,33 @@ function renderBibliography(bib) {
 
 function init() {
   loadSettings();
+
+  // A first visit gets the last 30 days, which is enough to see a pattern without producing a
+  // report nobody reads.
+  if (!$('date-from').value || !$('date-to').value) {
+    const preset = presetRange({ days: 30 });
+    $('date-from').value = isoDay(preset.from);
+    $('date-to').value = isoDay(preset.to - MS_PER_DAY);
+  }
+
   for (const id of PERSISTED) $(id)?.addEventListener('change', saveSettings);
+  for (const id of ['date-from', 'date-to']) {
+    // A changed range can reveal or hide sessions, so the selection is re-derived rather than
+    // silently keeping ticks against sessions that are no longer on screen.
+    $(id).addEventListener('change', () => { state.selected = null; onRangeChanged(); });
+  }
+  for (const b of document.querySelectorAll('button.preset')) {
+    b.addEventListener('click', () => {
+      const r = presetRange(b.dataset);
+      if (!r) return;
+      state.selected = null;
+      setRange(r.from, r.to - MS_PER_DAY);
+    });
+  }
+
+  $('session-picker').addEventListener('change', onPickerChange);
+  $('select-all').addEventListener('click', () => selectAll(true));
+  $('select-none').addEventListener('click', () => selectAll(false));
 
   $('ns-connect').addEventListener('click', connectNightscout);
   $('run').addEventListener('click', run);
@@ -398,7 +659,7 @@ function init() {
     if (e.dataTransfer?.files?.length) addFiles([...e.dataTransfer.files]);
   });
 
-  updateRunButton();
+  onRangeChanged();
 }
 
 if (document.readyState === 'loading') {

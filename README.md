@@ -24,6 +24,23 @@ different weight:
 It then looks across sessions of the same kind for a pattern, and says plainly when there are
 too few to describe one.
 
+## Choosing what to look at
+
+A date range governs both what is fetched from Nightscout and which sessions are offered, and
+the sessions inside it are then listed individually so specific ones can be picked. That matters
+more than it sounds: ninety days produces a report nobody reads, while three sessions you were
+actually curious about produce one you will.
+
+Sessions are grouped by day and show duration, distance, whether heart rate was recorded, and
+which app wrote them. Any that fall outside the glucose data fetched are listed but not
+selectable, since evaluating one would produce a page of findings that all say the same thing
+about missing data.
+
+A day either side of the chosen range is fetched as well. The analysis needs it: time below
+range in the 24 hours before a session predicts post-exercise nocturnal hypoglycaemia about as
+strongly as the exercise does, and the delayed risk period runs 7 to 11 hours afterwards, which
+for an evening session falls in the night that follows.
+
 ## Getting it working
 
 ### Nightscout

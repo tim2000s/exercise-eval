@@ -305,3 +305,57 @@ details.help > *:not(summary) { font-size: 0.9rem; color: var(--ink-2); max-widt
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---- date range and session picker ---- */
+
+.field.presets { flex: 1 1 24rem; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+button.preset, button.secondary {
+  background: var(--surface-sunk); color: var(--ink-2);
+  border: 1px solid var(--border); cursor: pointer;
+  padding: 0.4rem 0.7rem; font-size: 0.875rem;
+}
+button.preset:hover, button.secondary:hover { border-color: var(--baseline); color: var(--ink); }
+button.preset[aria-pressed="true"] {
+  background: var(--session-span); border-color: var(--series-1); color: var(--ink);
+}
+
+.session-actions { margin-bottom: 0.75rem; }
+
+.session-picker {
+  list-style: none; padding: 0; margin: 0;
+  max-height: 22rem; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.session-picker li { border-bottom: 1px solid var(--border); }
+.session-picker li:last-child { border-bottom: 0; }
+
+.session-picker label {
+  display: flex; align-items: baseline; gap: 0.7rem;
+  padding: 0.5rem 0.8rem; cursor: pointer; font-size: 0.9rem;
+}
+.session-picker label:hover { background: var(--surface-sunk); }
+.session-picker input[type="checkbox"] { margin: 0; flex: 0 0 auto; align-self: center; }
+
+.session-picker .when {
+  flex: 0 0 10.5rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.session-picker .what { flex: 1 1 auto; font-weight: 500; }
+.session-picker .detail { color: var(--ink-muted); font-size: 0.85rem; white-space: nowrap; }
+
+.session-picker li.no-glucose label { opacity: 0.55; }
+.session-picker .flag {
+  font-size: 0.75rem; color: var(--status-warning); white-space: nowrap;
+}
+
+.day-heading {
+  padding: 0.35rem 0.8rem; background: var(--surface-sunk);
+  font-size: 0.78rem; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--ink-muted); position: sticky; top: 0;
+}
+
+@media (max-width: 40rem) {
+  .session-picker .when { flex-basis: 100%; }
+  .session-picker label { flex-wrap: wrap; gap: 0.35rem 0.6rem; }
+}

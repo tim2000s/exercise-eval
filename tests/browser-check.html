@@ -215,7 +215,9 @@ await check('the page itself loads and wires up without error', async () => {
   // The module script runs after load, so give it a turn before asserting on its effects.
   await new Promise((r) => setTimeout(r, 400));
 
-  for (const id of ['ns-url', 'ns-token', 'ns-days', 'ns-connect', 'dropzone', 'file-input',
+  for (const id of ['date-from', 'date-to', 'period-summary', 'ns-url', 'ns-token',
+                    'ns-connect', 'dropzone', 'file-input', 'step-sessions', 'session-picker',
+                    'session-count', 'session-outside', 'select-all', 'select-none',
                     'set-age', 'set-mass', 'set-resting', 'set-maxhr', 'set-units', 'set-risk',
                     'set-insulin', 'run', 'run-status', 'results', 'summary', 'sessions',
                     'bibliography', 'log', 'progress']) {
@@ -224,6 +226,12 @@ await check('the page itself loads and wires up without error', async () => {
 
   const run = doc.getElementById('run');
   assert(run.disabled, 'the analyse button should start disabled');
+  assert(doc.getElementById('step-sessions').hidden,
+    'the session picker should be hidden until a file is imported');
+  assert(doc.getElementById('date-from').value && doc.getElementById('date-to').value,
+    'the date range should be filled in on a first visit');
+  assert(/\d+ days?,/.test(doc.getElementById('period-summary').textContent),
+    `the period summary did not render: ${doc.getElementById('period-summary').textContent}`);
   assert(/Fetch your Nightscout data/i.test(doc.getElementById('run-status').textContent),
     `unexpected initial status: ${doc.getElementById('run-status').textContent}`);
   assert(doc.getElementById('results').hidden, 'results should start hidden');
@@ -246,6 +254,104 @@ await check('the page itself loads and wires up without error', async () => {
   frame.remove();
   assert(errors.length === 0, `the page raised: ${errors.join('; ')}`);
   return 'all controls present, drop zone wired, both palettes defined';
+});
+
+await check('the date range and session picker work on the real page', async () => {
+  const res = await fixture('tests/fixtures/health_connect_export.zip');
+  const blob = await res.blob();
+
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1024px;height:768px;border:0;position:absolute;left:-9999px';
+  frame.src = new URL('index.html', base).toString();
+  const loaded = new Promise((resolve, reject) => {
+    frame.onload = resolve;
+    setTimeout(() => reject(new Error('index.html did not load')), 15000);
+  });
+  document.body.appendChild(frame);
+  await loaded;
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  await new Promise((r) => setTimeout(r, 400));
+
+  // The fixture's sessions are in August 2026, so the default range will not contain them.
+  const setDates = async (from, to) => {
+    doc.getElementById('date-from').value = from;
+    doc.getElementById('date-to').value = to;
+    for (const id of ['date-from', 'date-to']) {
+      doc.getElementById(id).dispatchEvent(new win.Event('change', { bubbles: true }));
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  };
+
+  await setDates('2026-08-01', '2026-08-31');
+
+  // Feed the real file input, which is the path a click through the dialog takes.
+  const dt = new win.DataTransfer();
+  dt.items.add(new win.File([blob], 'Health Connect.zip', { type: 'application/zip' }));
+  const input = doc.getElementById('file-input');
+  input.files = dt.files;
+  input.dispatchEvent(new win.Event('change', { bubbles: true }));
+
+  // Unzipping and reading the database takes a moment.
+  const deadline = Date.now() + 20000;
+  while (doc.getElementById('step-sessions').hidden && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (doc.getElementById('step-sessions').hidden) {
+    // The page logs what it did with the file, so quote that rather than guessing.
+    const logged = [...doc.querySelectorAll('#log li')].map((li) => li.textContent).join(' | ');
+    const listed = [...doc.querySelectorAll('#file-list li')].map((li) => li.textContent).join(' | ');
+    throw new Error(`the session picker never appeared. files: ${listed || 'none'} ; ` +
+                    `log: ${logged || 'empty'}`);
+  }
+
+  const boxes = () => [...doc.querySelectorAll('#session-picker input[type="checkbox"]')];
+  assert(boxes().length === 4, `expected 4 sessions listed, got ${boxes().length}`);
+  assert(boxes().every((b) => b.checked), 'imported sessions should arrive selected');
+  assert(/4 of 4 selected/.test(doc.getElementById('session-count').textContent),
+    `count read "${doc.getElementById('session-count').textContent}"`);
+  // Sessions are grouped by day.
+  assert(doc.querySelectorAll('#session-picker .day-heading').length >= 3,
+    'sessions should be grouped under day headings');
+
+  // Deselecting one is reflected in the count and in the run status.
+  boxes()[0].checked = false;
+  boxes()[0].dispatchEvent(new win.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 100));
+  assert(/3 of 4 selected/.test(doc.getElementById('session-count').textContent),
+    `count did not update: "${doc.getElementById('session-count').textContent}"`);
+
+  doc.getElementById('select-none').click();
+  await new Promise((r) => setTimeout(r, 100));
+  assert(boxes().every((b) => !b.checked), 'select none left something ticked');
+  assert(/0 of 4 selected/.test(doc.getElementById('session-count').textContent),
+    `count read "${doc.getElementById('session-count').textContent}"`);
+  assert(doc.getElementById('run').disabled, 'no sessions selected should disable the run button');
+  // No Nightscout data has been fetched in this check, and that is the more useful thing to
+  // say, so the status names it rather than the empty selection.
+  assert(/Fetch your Nightscout data/.test(doc.getElementById('run-status').textContent),
+    `run status read "${doc.getElementById('run-status').textContent}"`);
+
+  doc.getElementById('select-all').click();
+  await new Promise((r) => setTimeout(r, 100));
+  assert(boxes().every((b) => b.checked), 'select all missed something');
+
+  // Narrowing the range to a single day should leave exactly the session on that day.
+  await setDates('2026-08-03', '2026-08-03');
+  assert(boxes().length === 1, `a one-day range should list 1 session, listed ${boxes().length}`);
+  assert(/3 further sessions/.test(doc.getElementById('session-outside').textContent),
+    `outside note read "${doc.getElementById('session-outside').textContent}"`);
+
+  // A preset button should change the dates and mark itself.
+  doc.querySelector('button.preset[data-days="30"]').click();
+  await new Promise((r) => setTimeout(r, 150));
+  assert(doc.querySelector('button.preset[data-days="30"]').getAttribute('aria-pressed') === 'true',
+    'the preset did not mark itself as selected');
+  assert(doc.getElementById('date-to').value === new Date().toISOString().slice(0, 10) ||
+         doc.getElementById('date-to').value.length === 10, 'the preset did not set the dates');
+
+  frame.remove();
+  return 'range, grouping, selection and presets all behave';
 });
 
 // The end-to-end check. This is the one that proves the science actually runs where it has to.

@@ -32,8 +32,44 @@
 
 <main class="wrap">
 
+  <section class="step" id="step-period">
+    <h2><span class="step-n">1</span> Which dates</h2>
+    <p class="hint">
+      This sets what is fetched from Nightscout and which sessions are offered in step 4. A
+      narrow range is usually more useful than a wide one: three sessions you were curious about
+      make a report you will read, and ninety days of them make one you will not.
+    </p>
+    <div class="field-row">
+      <label class="field narrow"><span>From</span>
+        <input type="date" id="date-from"></label>
+      <label class="field narrow"><span>To</span>
+        <input type="date" id="date-to"></label>
+      <div class="field presets">
+        <span>Or pick a period</span>
+        <div class="preset-row">
+          <button type="button" class="preset" data-days="7">Last 7 days</button>
+          <button type="button" class="preset" data-days="30">Last 30 days</button>
+          <button type="button" class="preset" data-days="90">Last 90 days</button>
+          <button type="button" class="preset" data-month="this">This month</button>
+          <button type="button" class="preset" data-month="last">Last month</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint" id="period-summary"></p>
+    <details class="help">
+      <summary>Why a little more than this is fetched</summary>
+      <p>
+        The analysis needs data on either side of every session. Time below range in the 24 hours
+        before predicts post-exercise nocturnal hypoglycaemia about as strongly as the exercise
+        does, and the delayed risk period runs 7 to 11 hours afterwards, which for an evening
+        session falls in the night that follows. So a day either side of the range is fetched,
+        and only sessions that start inside the range are offered.
+      </p>
+    </details>
+  </section>
+
   <section class="step" id="step-nightscout">
-    <h2><span class="step-n">1</span> Your Nightscout site</h2>
+    <h2><span class="step-n">2</span> Your Nightscout site</h2>
     <div class="field-row">
       <label class="field">
         <span>Nightscout address</span>
@@ -44,15 +80,6 @@
         <span>Read-only token <em>(only if needed)</em></span>
         <input type="text" id="ns-token" placeholder="leave blank on most sites"
                autocomplete="off" spellcheck="false">
-      </label>
-      <label class="field narrow">
-        <span>How far back</span>
-        <select id="ns-days">
-          <option value="30">30 days</option>
-          <option value="60">60 days</option>
-          <option value="90" selected>90 days</option>
-          <option value="180">180 days</option>
-        </select>
       </label>
     </div>
     <div class="actions">
@@ -83,7 +110,7 @@ CORS_ALLOW_ORIGIN=*</code></pre>
   </section>
 
   <section class="step" id="step-file">
-    <h2><span class="step-n">2</span> Your activity data</h2>
+    <h2><span class="step-n">3</span> Your activity data</h2>
     <div id="dropzone" class="dropzone" tabindex="0" role="button"
          aria-label="Choose or drop an activity file">
       <p><strong>Drop a file here</strong>, or click to choose one.</p>
@@ -113,8 +140,19 @@ CORS_ALLOW_ORIGIN=*</code></pre>
     </details>
   </section>
 
+  <section class="step" id="step-sessions" hidden>
+    <h2><span class="step-n">4</span> Which sessions</h2>
+    <div class="actions session-actions">
+      <button type="button" id="select-all" class="secondary">Select all</button>
+      <button type="button" id="select-none" class="secondary">Select none</button>
+      <span class="hint" id="session-count"></span>
+    </div>
+    <ul id="session-picker" class="session-picker"></ul>
+    <p class="hint" id="session-outside"></p>
+  </section>
+
   <section class="step" id="step-settings">
-    <h2><span class="step-n">3</span> About you</h2>
+    <h2><span class="step-n">5</span> About you</h2>
     <p class="hint">
       Every one of these is optional. Each one that is left blank makes some part of the analysis
       less certain, and the report says which part.
@@ -161,7 +199,7 @@ CORS_ALLOW_ORIGIN=*</code></pre>
   </section>
 
   <section class="step" id="step-run">
-    <h2><span class="step-n">4</span> Run the analysis</h2>
+    <h2><span class="step-n">6</span> Run the analysis</h2>
     <div class="actions">
       <button id="run" class="primary" disabled>Evaluate my sessions</button>
       <span class="hint" id="run-status">Fetch your Nightscout data and add an activity file first.</span>
