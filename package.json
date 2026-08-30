@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "vendor": "node tools/vendor.js",
-    "fixtures": "python3 tools/make_fixture.py && python3 tools/make_fit_fixture.py"
+    "fixtures": "python3 tools/make_fixture.py && python3 tools/make_fit_fixture.py && python3 tools/make_strava_fixture.py",
+    "check": "npm run fixtures && npm test && python3 -m pytest tests/ -q && python3 tools/mutation_check.py"
   },
   "devDependencies": {
     "@xmldom/xmldom": "^0.9.12",
