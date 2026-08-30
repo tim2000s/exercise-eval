@@ -103,11 +103,19 @@ def analyse(
     max_hr: float | None = None,
     age_years: float | None = None,
     duration_min: float | None = None,
+    summary_avg_hr: float | None = None,
+    summary_max_hr: float | None = None,
 ) -> Intensity:
     """Combine the activity label with whatever heart rate evidence exists.
 
     hr_samples are dicts with t in epoch milliseconds and bpm. An empty list is expected and
     handled: many sessions arrive from apps that never wrote heart rate.
+
+    Where no series exists but a summary average and maximum do, as a Strava activity carries
+    before its stream is fetched, those are used instead. That gives a defensible mean fraction
+    of reserve, and nothing else: a mean says nothing about whether the session was steady or
+    intervals, so the variation is left unknown and the modality falls back to the label rather
+    than being inferred from a shape that was not measured.
     """
     notes: list[str] = []
 
@@ -117,6 +125,11 @@ def analyse(
             notes.append(
                 f"Only {len(usable)} usable heart rate readings, so intensity comes from the "
                 f"activity label alone."
+            )
+        if summary_avg_hr:
+            return _from_summary(
+                summary_avg_hr, summary_max_hr, label_modality, resting_hr, max_hr, age_years,
+                notes,
             )
         return Intensity(
             mean_hrr=None, peak_hrr=None, fraction_high=None, variation=None,
@@ -182,6 +195,54 @@ def analyse(
     )
 
 
+def _from_summary(
+    avg_hr: float,
+    max_session_hr: float | None,
+    label_modality: str,
+    resting_hr: float | None,
+    max_hr: float | None,
+    age_years: float | None,
+    notes: list[str],
+) -> Intensity:
+    """Intensity from an average and a maximum, with no series behind them."""
+    if max_hr is None:
+        max_hr = estimate_hr_max(age_years)
+    if max_hr is None:
+        # Without a ceiling there is no reserve to take a fraction of, and a session maximum is
+        # not one: taking it as the ceiling would call every session maximal.
+        notes.append(
+            "This session has an average heart rate but no series and no age, so no fraction of "
+            "reserve can be worked out. Entering an age in the settings would allow one."
+        )
+        return Intensity(
+            mean_hrr=None, peak_hrr=None, fraction_high=None, variation=None,
+            band="not measured", modality=label_modality, basis="label-only",
+            notes=tuple(notes),
+        )
+    if resting_hr is None:
+        resting_hr = 70.0
+        notes.append(
+            "No resting heart rate was available, so 70 bpm was assumed for this session's "
+            "intensity."
+        )
+    reserve = max(20.0, max_hr - resting_hr)
+    mean_hrr = max(0.0, (avg_hr - resting_hr) / reserve)
+    peak_hrr = (max(0.0, (max_session_hr - resting_hr) / reserve)
+                if max_session_hr else None)
+    band = next(name for name, lo, hi in BANDS if lo <= mean_hrr < hi)
+
+    notes.append(
+        "Intensity for this session comes from the average and maximum heart rate in the "
+        "activity summary rather than from a recorded series. That fixes how hard it was on "
+        "average and says nothing about whether it was steady or intervals, so the kind of work "
+        "is still taken from the activity label."
+    )
+    return Intensity(
+        mean_hrr=mean_hrr, peak_hrr=peak_hrr, fraction_high=None, variation=None,
+        band=band, modality=label_modality, basis="summary", notes=tuple(notes),
+    )
+
+
 def _modality_from_measurement(
     label_modality: str,
     mean_hrr: float,
@@ -240,6 +301,14 @@ def _modality_from_measurement(
 
 def describe(intensity: Intensity) -> str:
     """One sentence a reader can act on."""
+    if intensity.basis == "summary":
+        peak = (f", peaking at {intensity.peak_hrr * 100:.0f} percent"
+                if intensity.peak_hrr is not None else "")
+        return (
+            f"{intensity.band.capitalize()} effort on the summary figures, averaging "
+            f"{intensity.mean_hrr * 100:.0f} percent of heart rate reserve{peak}. No recorded "
+            f"series, so it is treated as {intensity.modality} work on the activity label."
+        )
     if not intensity.is_measured:
         if intensity.basis == "absent":
             return "No heart rate and no recognised activity type, so intensity is unknown."

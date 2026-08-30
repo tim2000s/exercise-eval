@@ -75,9 +75,39 @@ The tool sniffs the file's bytes rather than trusting its name, and accepts:
 | Source | What to give it |
 |---|---|
 | Health Connect | The scheduled export zip. There is no on-demand export: set up a daily, weekly or monthly schedule in Health Connect, then collect the file from wherever it was written |
-| Strava | The bulk export archive |
+| Strava | Either the bulk export archive, or a direct connection (below) |
 | Garmin Connect | The account export, or a single activity file |
 | Anything else | Individual FIT, TCX, GPX, CSV or JSON files |
+
+### Connecting to Strava directly
+
+This works from a static page, which is not obvious in advance: Strava sends
+`Access-Control-Allow-Origin: *` on both its API and its token endpoint, so the whole
+authorisation flow runs in the browser with nothing in between.
+
+What it costs you is a Strava application of your own. Strava has no public-client mode and no
+PKCE, so the token exchange needs a client secret, and there is no arrangement in which a shared
+one could be held safely in a public page. Registering an application at
+[strava.com/settings/api](https://www.strava.com/settings/api) takes a few minutes, requires a
+paid Strava subscription, and gives you a client ID and secret to paste in. Set the
+authorisation callback domain to the domain the page is served from, with no scheme and no path.
+
+Both values stay in your browser and are sent only to Strava. Disconnect and forget removes
+them; revoking the application on Strava ends its access regardless.
+
+Activities fetched this way are held in memory for the visit and never written to storage. Heart
+rate detail is a separate request per activity against a budget of 100 requests every fifteen
+minutes, so it is fetched only for the sessions you choose to analyse. Sessions without it still
+carry the average and maximum heart rate from the summary, which fixes how hard a session was on
+average and says nothing about whether it was steady or intervals; the report marks that
+distinction rather than papering over it.
+
+One thing to weigh. Strava's API policy of June 2026 caps retention of their data at seven days
+and, read strictly, restricts processing it for analysis at all, while the same document
+explicitly protects your right to export your own data through their bulk export tool. Nothing
+here is stored and the analysis runs on your own machine, but the export route sits outside
+those terms entirely. `docs/strava-api.md` sets out the clauses and what the tool does about
+them.
 
 More than one file can be added. A session that appears in two files is kept once, keeping
 whichever copy carried heart rate.

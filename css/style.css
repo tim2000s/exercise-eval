@@ -359,3 +359,31 @@ button.preset[aria-pressed="true"] {
   .session-picker .when { flex-basis: 100%; }
   .session-picker label { flex-wrap: wrap; gap: 0.35rem 0.6rem; }
 }
+
+/* ---- Strava connection ---- */
+
+.or-divider {
+  display: flex; align-items: center; gap: 0.8rem;
+  margin: 1.1rem 0; color: var(--ink-muted); font-size: 0.85rem;
+}
+.or-divider::before, .or-divider::after {
+  content: ""; flex: 1 1 auto; height: 1px; background: var(--border);
+}
+
+.strava {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.9rem 1.1rem; background: var(--surface-sunk);
+}
+.strava p { margin-bottom: 0.6rem; }
+.strava .field-row { margin-bottom: 0; align-items: flex-end; }
+.strava-status { color: var(--ink-2); font-size: 0.92rem; }
+.strava-status strong { color: var(--ink); }
+
+#strava-message:empty { display: none; }
+#strava-message { margin-top: 0.6rem; }
+#strava-message.error { color: var(--status-critical); }
+#strava-message.working { color: var(--series-1); }
+
+details.help ol { padding-left: 1.3rem; margin: 0 0 0.75rem; }
+details.help li { margin-bottom: 0.3rem; }
+details.help a { color: var(--series-1); }

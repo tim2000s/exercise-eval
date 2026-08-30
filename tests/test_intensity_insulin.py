@@ -247,3 +247,47 @@ def test_a_temp_basal_above_the_profile_rate_is_reported_as_an_increase():
     assert b.mechanism == "increased"
     assert b.fraction_of_profile == pytest.approx(1.6)
     assert "above the profile rate" in b.detail
+
+
+# ---- intensity from a summary rather than a series ---------------------------------------------
+
+def test_a_summary_average_gives_a_fraction_of_reserve_when_no_series_exists():
+    """A Strava activity carries an average and a maximum before its stream is fetched."""
+    i = X.analyse([], label_modality="aerobic", summary_avg_hr=145, summary_max_hr=170,
+                  resting_hr=52, age_years=45)
+    assert i.basis == "summary"
+    # (145 - 52) / (176.5 - 52) = 0.747
+    assert i.mean_hrr == pytest.approx(0.747, abs=0.01)
+    assert i.peak_hrr == pytest.approx(0.948, abs=0.01)
+    assert i.band == "vigorous"
+
+
+def test_a_summary_cannot_say_whether_a_session_was_steady_or_intervals():
+    """A mean says how hard, not what shape. Inferring intervals from it would be invention."""
+    i = X.analyse([], label_modality="aerobic", summary_avg_hr=150, resting_hr=52, age_years=45)
+    assert i.variation is None
+    assert i.fraction_high is None
+    assert i.modality == "aerobic", "the modality must come from the label, not from a mean"
+    assert any("says nothing about whether it was steady" in n for n in i.notes)
+
+
+def test_a_summary_is_not_counted_as_a_measured_series():
+    i = X.analyse([], label_modality="aerobic", summary_avg_hr=150, resting_hr=52, age_years=45)
+    assert i.is_measured is False, "findings resting on this should still be marked provisional"
+    assert "summary figures" in X.describe(i)
+
+
+def test_a_summary_without_an_age_declines_rather_than_using_the_session_maximum():
+    """The session maximum is not a ceiling; treating it as one would call everything maximal."""
+    i = X.analyse([], label_modality="aerobic", summary_avg_hr=145, summary_max_hr=170)
+    assert i.basis == "label-only"
+    assert i.mean_hrr is None
+    assert any("no age" in n for n in i.notes)
+
+
+def test_a_recorded_series_is_preferred_over_the_summary():
+    samples = hr(lambda i: 175 if (i // 6) % 2 else 115)
+    i = X.analyse(samples, label_modality="aerobic", summary_avg_hr=90, summary_max_hr=95,
+                  resting_hr=52, age_years=45, duration_min=40)
+    assert i.basis == "measured"
+    assert i.modality == "mixed", "the series should still drive the interval reclassification"

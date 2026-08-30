@@ -107,6 +107,8 @@ def _one(s, entries, treatments, profile, st, units, dia, peak, risk_group) -> d
         max_hr=st.get("max_hr"),
         age_years=st.get("age_years"),
         duration_min=(end - start) / MS_PER_MIN,
+        summary_avg_hr=s.get("avgHr"),
+        summary_max_hr=s.get("maxHr"),
     )
 
     basal_rate = basal_rate_at(profile, start)

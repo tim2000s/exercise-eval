@@ -89,6 +89,17 @@ MUTATIONS = [
      "severity = \"adjustment\""),
     ("python/xeval/recommend.py", "hypoglycaemia treatment is assessed with no low present",
      "if d.nadir_mmol is None or d.nadir_mmol >= HYPO_L1_MMOL:", "if False:"),
+    # Intensity taken from a summary rather than a recorded series.
+    ("python/xeval/intensity.py", "a summary average is treated as a measured series",
+     'band=band, modality=label_modality, basis="summary", notes=tuple(notes),',
+     'band=band, modality=label_modality, basis="measured", notes=tuple(notes),'),
+    ("python/xeval/intensity.py", "a summary is used to infer the shape of a session",
+     "mean_hrr=mean_hrr, peak_hrr=peak_hrr, fraction_high=None, variation=None,",
+     "mean_hrr=mean_hrr, peak_hrr=peak_hrr, fraction_high=0.5, variation=0.3,"),
+    ("python/xeval/intensity.py", "a session maximum is used as the reserve ceiling",
+     "        if summary_avg_hr:", "        if False:"),
+    ("python/xeval/intensity.py", "a recorded series is discarded in favour of the summary",
+     "    if len(usable) < 5:", "    if True:"),
 ]
 
 

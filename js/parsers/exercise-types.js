@@ -126,6 +126,10 @@ const STRING_ALIASES = {
   tabletennis: 'TABLE_TENNIS', racquetball: 'RACQUETBALL', pickleball: 'RACQUETBALL',
   golf: 'GOLF', yoga: 'YOGA', pilates: 'PILATES', wheelchair: 'WHEELCHAIR',
   hiit: 'HIGH_INTENSITY_INTERVAL_TRAINING',
+  highintensityintervaltraining: 'HIGH_INTENSITY_INTERVAL_TRAINING',
+  emountainbikeride: 'BIKING', rollerski: 'SKIING', volleyball: 'VOLLEYBALL',
+  basketball: 'BASKETBALL', cricket: 'CRICKET', dance: 'DANCING',
+  padel: 'RACQUETBALL', physicaltherapy: 'STRETCHING',
   // Strava has no Health Connect equivalent for these, so they stay unknown deliberately.
   // skateboard, snowmobile, wintersport, watersport and similar fall through.
 };

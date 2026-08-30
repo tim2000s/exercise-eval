@@ -271,6 +271,49 @@ await check('a Strava export is read in the browser, gzipped entries included', 
   return `${d.sessions.length} activities, ${d.sessions.reduce((a, s) => a + s.hr.length, 0)} heart rate readings`;
 });
 
+await check('the Strava panel renders and refuses an incomplete connection', async () => {
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1024px;height:768px;border:0;position:absolute;left:-9999px';
+  frame.src = new URL('index.html', base).toString();
+  const loaded = new Promise((resolve, reject) => {
+    frame.onload = resolve;
+    setTimeout(() => reject(new Error('index.html did not load')), 15000);
+  });
+  document.body.appendChild(frame);
+  await loaded;
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  await new Promise((r) => setTimeout(r, 400));
+
+  assert(!doc.getElementById('strava-disconnected').hidden,
+    'the disconnected panel should show before any credentials exist');
+  assert(doc.getElementById('strava-connected').hidden,
+    'the connected panel should be hidden before any credentials exist');
+
+  // The callback domain the user has to register is filled in from the page's own host, since
+  // getting it wrong is the most likely reason a connection fails.
+  assert(doc.getElementById('strava-domain').textContent === win.location.hostname,
+    `callback domain read "${doc.getElementById('strava-domain').textContent}"`);
+
+  // The secret field must not be a plain text input.
+  assert(doc.getElementById('strava-secret').type === 'password',
+    'the client secret should not be shown in clear');
+
+  // Connecting with nothing filled in must not navigate away.
+  const before = win.location.href;
+  doc.getElementById('strava-connect').click();
+  await new Promise((r) => setTimeout(r, 150));
+  assert(win.location.href === before, 'an empty connection attempt navigated away');
+  assert(/client ID and the client secret are needed/.test(
+    doc.getElementById('strava-message').textContent),
+    `message read "${doc.getElementById('strava-message').textContent}"`);
+  assert(doc.getElementById('strava-message').classList.contains('error'),
+    'the message should be marked as an error');
+
+  frame.remove();
+  return 'panel renders, secret masked, empty attempt refused';
+});
+
 await check('the date range and session picker work on the real page', async () => {
   const res = await fixture('tests/fixtures/health_connect_export.zip');
   const blob = await res.blob();

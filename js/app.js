@@ -4,6 +4,7 @@
 import { normaliseBase, probe, fetchEntries, fetchTreatments, fetchProfile } from './nightscout.js';
 import { importFile, mergeDatasets } from './import.js';
 import { analyse } from './pyodide-bridge.js';
+import * as strava from './strava.js';
 import { sessionChart, attachHover, summaryTable } from './charts.js';
 
 const $ = (id) => document.getElementById(id);
@@ -25,11 +26,33 @@ const PERSISTED = ['ns-url', 'date-from', 'date-to', 'set-age', 'set-mass', 'set
  */
 const FETCH_PADDING_MS = MS_PER_DAY;
 
+/**
+ * Strava credentials live under their own key, separate from the settings blob.
+ *
+ * The client secret is a real credential, so it is worth being able to remove it in one action
+ * without disturbing anything else, and worth not having it travel inside a general settings
+ * object that other code writes to. Activities themselves are never persisted: they are held in
+ * memory for the length of the visit and nothing more.
+ */
+const STRAVA_KEY = 'exercise-eval.strava.v1';
+
+function loadStrava() {
+  try { return JSON.parse(localStorage.getItem(STRAVA_KEY) || 'null'); } catch { return null; }
+}
+
+function saveStrava(value) {
+  try {
+    if (value) localStorage.setItem(STRAVA_KEY, JSON.stringify(value));
+    else localStorage.removeItem(STRAVA_KEY);
+  } catch { /* a private window; the connection then lasts only this visit */ }
+}
+
 const state = {
   nightscout: null,   // { entries, treatments, profile, units, base, range }
   datasets: [],       // one per imported file
   files: [],
   selected: null,     // Set of session ids, or null before any file has been imported
+  strava: null,       // { clientId, clientSecret, refreshToken, accessToken, expiresAt, athlete }
 };
 
 // ---- logging ---------------------------------------------------------------------------------
@@ -260,6 +283,145 @@ async function connectNightscout() {
   }
 }
 
+// ---- Strava ----------------------------------------------------------------------------------
+
+function stravaMessage(text, kind = '') {
+  const el = $('strava-message');
+  el.textContent = text;
+  el.className = `hint ${kind}`;
+}
+
+function renderStrava() {
+  const c = state.strava;
+  const connected = Boolean(c?.refreshToken);
+  $('strava-disconnected').hidden = connected;
+  $('strava-connected').hidden = !connected;
+  $('strava-domain').textContent = location.hostname;
+
+  if (connected) {
+    const who = c.athlete?.name ? ` as ${c.athlete.name}` : '';
+    $('strava-who').innerHTML =
+      `<strong>Connected to Strava${esc(who)}.</strong> Activities are fetched for the dates in ` +
+      'step 1 and held only for this visit.';
+  }
+  if (c?.clientId && !connected) $('strava-id').value = c.clientId;
+}
+
+/** Ensure a usable access token, refreshing it if the six-hour life has run out. */
+async function stravaToken() {
+  const c = state.strava;
+  if (!c?.refreshToken) throw new Error('Not connected to Strava.');
+  // A minute of margin, so a token does not expire between the check and the request.
+  if (c.accessToken && c.expiresAt > Date.now() + 60_000) return c.accessToken;
+
+  stravaMessage('Renewing the Strava access token.', 'working');
+  const t = await strava.refreshTokens(c.clientId, c.clientSecret, c.refreshToken);
+  state.strava = { ...c, ...t };
+  saveStrava(state.strava);
+  return t.accessToken;
+}
+
+function stravaConnect() {
+  const clientId = $('strava-id').value.trim();
+  const clientSecret = $('strava-secret').value.trim();
+  if (!clientId || !clientSecret) {
+    stravaMessage('Both the client ID and the client secret are needed.', 'error');
+    return;
+  }
+  // The secret has to survive the redirect, since the exchange happens when Strava sends the
+  // browser back to this page.
+  state.strava = { ...(state.strava || {}), clientId, clientSecret };
+  saveStrava(state.strava);
+  location.href = strava.authoriseUrl(clientId);
+}
+
+function stravaForget() {
+  state.strava = null;
+  saveStrava(null);
+  $('strava-id').value = '';
+  $('strava-secret').value = '';
+  // Drop anything already fetched from Strava, since the connection that justified it is gone.
+  const before = state.datasets.length;
+  state.datasets = state.datasets.filter((d) => d.source !== 'strava');
+  if (state.datasets.length !== before) state.selected = null;
+  renderStrava();
+  renderSessionPicker();
+  updateRunButton();
+  stravaMessage('The client ID and secret have been removed from this browser. Revoke the ' +
+                'application on Strava as well if you want to end its access entirely.');
+  log('Strava credentials removed from this browser.');
+}
+
+/** Complete the authorisation if this page load is a return from Strava. */
+async function stravaCompleteRedirect() {
+  const result = strava.readRedirect();
+  if (!result) return;
+
+  if (result.error) {
+    stravaMessage(result.error, 'error');
+    log(result.error, 'warn');
+    return;
+  }
+  const c = state.strava;
+  if (!c?.clientId || !c?.clientSecret) {
+    stravaMessage('Strava sent an authorisation back, but the client ID and secret are no ' +
+                  'longer in this browser. Enter them and connect again.', 'error');
+    return;
+  }
+  try {
+    stravaMessage('Completing the connection to Strava.', 'working');
+    const tokens = await strava.exchangeCode(c.clientId, c.clientSecret, result.code);
+    state.strava = { ...c, ...tokens };
+    saveStrava(state.strava);
+    renderStrava();
+    stravaMessage('Connected. Fetch activities for the dates in step 1 when you are ready.');
+    log(`Connected to Strava${tokens.athlete?.name ? ` as ${tokens.athlete.name}` : ''}.`);
+  } catch (err) {
+    stravaMessage(err.message, 'error');
+    log(`Strava: ${err.message}`, 'warn');
+  }
+}
+
+async function stravaFetch() {
+  const range = readRange();
+  if (!range) { stravaMessage('Choose a start date on or before the end date first.', 'error'); return; }
+
+  const button = $('strava-fetch');
+  button.disabled = true;
+  try {
+    const token = await stravaToken();
+    stravaMessage('Fetching activities from Strava.', 'working');
+    const { activities } = await strava.fetchActivities(
+      token, range.from, range.to, (m) => stravaMessage(m, 'working'));
+
+    const dataset = strava.toSessions(activities);
+    // A second fetch replaces the first rather than doubling every session.
+    state.datasets = state.datasets.filter((d) => d.source !== 'strava');
+    state.datasets.push(dataset);
+    state.selected = null;
+
+    log(`Strava: ${dataset.sessions.length} activit${dataset.sessions.length === 1 ? 'y' : 'ies'} ` +
+        `between ${new Date(range.from).toLocaleDateString()} and ` +
+        `${new Date(range.to - MS_PER_DAY).toLocaleDateString()}.`);
+    for (const w of dataset.warnings) log(`Strava: ${w}`, 'warn');
+
+    stravaMessage(
+      `${dataset.sessions.length} activit${dataset.sessions.length === 1 ? 'y' : 'ies'} fetched. ` +
+      'Heart rate detail is fetched for the sessions you choose, when you run the analysis.');
+    renderSessionPicker();
+    updateRunButton();
+  } catch (err) {
+    stravaMessage(err.message, 'error');
+    log(`Strava: ${err.message}`, 'warn');
+    if (err.kind === 'auth') {
+      state.strava = { ...state.strava, accessToken: null, expiresAt: 0 };
+      saveStrava(state.strava);
+    }
+  } finally {
+    button.disabled = false;
+  }
+}
+
 // ---- files -----------------------------------------------------------------------------------
 
 async function addFiles(fileList) {
@@ -454,6 +616,25 @@ async function run() {
     }
     log(`Evaluating ${inRange.length} session${inRange.length === 1 ? '' : 's'}.`);
 
+    // Heart rate detail from Strava is one request per activity against a small budget, so it
+    // is fetched here, for the chosen sessions only, rather than for everything on import.
+    const stravaChosen = inRange.filter((s) => s.stravaId && s.hasHeartRate && !s.hr.length);
+    if (stravaChosen.length && state.strava?.refreshToken) {
+      try {
+        const token = await stravaToken();
+        const { fetched, warnings } = await strava.fetchHeartRateFor(
+          token, stravaChosen, (m) => { log(m); progress(0.1); });
+        if (fetched) {
+          log(`Fetched heart rate detail for ${fetched} of ${stravaChosen.length} Strava ` +
+              'sessions.');
+        }
+        for (const w of warnings) log(`Strava: ${w}`, 'warn');
+      } catch (err) {
+        log(`Strava: ${err.message} The analysis continues with the summary heart rate for ` +
+            'those sessions.', 'warn');
+      }
+    }
+
     const settings = readSettings();
     // The most recent resting heart rate before each session, where the export carried one.
     if (!settings.resting_hr && merged.restingHr?.length) {
@@ -640,6 +821,14 @@ function init() {
 
   $('ns-connect').addEventListener('click', connectNightscout);
   $('run').addEventListener('click', run);
+
+  state.strava = loadStrava();
+  renderStrava();
+  $('strava-connect').addEventListener('click', stravaConnect);
+  $('strava-fetch').addEventListener('click', stravaFetch);
+  $('strava-forget').addEventListener('click', stravaForget);
+  // A return from Strava arrives as a query string on this page, so it is handled at load.
+  stravaCompleteRedirect();
 
   const dz = $('dropzone');
   const input = $('file-input');

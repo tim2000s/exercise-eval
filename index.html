@@ -123,6 +123,73 @@ CORS_ALLOW_ORIGIN=*</code></pre>
              accept=".zip,.db,.sqlite,.fit,.tcx,.gpx,.csv,.json,.txt">
     </div>
     <ul id="file-list" class="file-list"></ul>
+    <div class="or-divider"><span>or</span></div>
+
+    <div class="strava" id="strava-panel">
+      <div id="strava-disconnected">
+        <p><strong>Connect to Strava</strong> and fetch activities directly, with no file at all.</p>
+        <div class="field-row">
+          <label class="field narrow"><span>Client ID</span>
+            <input type="text" id="strava-id" autocomplete="off" spellcheck="false"
+                   placeholder="from your Strava API application"></label>
+          <label class="field narrow"><span>Client secret</span>
+            <input type="password" id="strava-secret" autocomplete="off" spellcheck="false"
+                   placeholder="kept in this browser only"></label>
+          <div class="field narrow"><span>&nbsp;</span>
+            <button type="button" id="strava-connect" class="primary">Connect to Strava</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="strava-connected" hidden>
+        <p class="strava-status" id="strava-who"></p>
+        <div class="actions">
+          <button type="button" id="strava-fetch" class="primary">Fetch activities for these dates</button>
+          <button type="button" id="strava-forget" class="secondary">Disconnect and forget</button>
+        </div>
+      </div>
+      <p class="hint" id="strava-message"></p>
+    </div>
+
+    <details class="help">
+      <summary>Setting up the Strava connection, and what it costs you</summary>
+      <p>
+        Strava has no way for a page like this one to identify itself without a secret, and no
+        public-client mode, so there is no arrangement in which a shared application would work
+        safely. Each person therefore uses their own Strava application, which takes a few
+        minutes once.
+      </p>
+      <ol>
+        <li>Go to <a href="https://www.strava.com/settings/api" target="_blank"
+            rel="noopener noreferrer">strava.com/settings/api</a> and create an application.
+            Strava requires a paid subscription to do this.</li>
+        <li>Set the <em>Authorization Callback Domain</em> to
+            <code id="strava-domain">your Pages domain</code>. A bare domain, with no scheme and
+            no path.</li>
+        <li>Copy the Client ID and Client Secret into the boxes above and press Connect.</li>
+      </ol>
+      <p>
+        Both values are stored in this browser and are sent only to Strava. They are your own
+        credentials for your own data, so the exposure is limited to your own account, but they
+        are real credentials: Disconnect and forget removes them, and revoking the application on
+        Strava ends its access regardless of what this browser holds.
+      </p>
+      <p>
+        Activities fetched from Strava are held in memory for the length of the visit and are
+        never written to storage. The heart rate detail for a session is a separate request each,
+        against a budget of 100 requests every fifteen minutes, so it is fetched only for the
+        sessions you actually choose to analyse.
+      </p>
+      <p>
+        One thing worth knowing before choosing this route. Strava's API policy of June 2026
+        restricts retaining their data beyond seven days and, read strictly, restricts processing
+        it for analysis at all, while the same document explicitly protects your right to export
+        your own data through their bulk export tool. Nothing here is stored and the analysis
+        happens on your own machine, but if that distinction matters to you, the export file
+        route sits outside the API terms entirely and is the safer choice.
+      </p>
+    </details>
+
     <details class="help">
       <summary>Where the Health Connect export comes from, and what is in it</summary>
       <p>
