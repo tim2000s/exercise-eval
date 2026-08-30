@@ -256,6 +256,21 @@ await check('the page itself loads and wires up without error', async () => {
   return 'all controls present, drop zone wired, both palettes defined';
 });
 
+await check('a Strava export is read in the browser, gzipped entries included', async () => {
+  const res = await fixture('tests/fixtures/strava_export.zip');
+  const file = new File([await res.blob()], 'export_12345.zip', { type: 'application/zip' });
+  const d = await importFile(file, () => {});
+  assert(d.sessions.length === 4, `read ${d.sessions.length}: ${d.warnings.join(' | ')}`);
+  assert(d.sessions.map((s) => s.typeName).join(',') === 'BIKING,RUNNING,SWIMMING_POOL,WALKING',
+    d.sessions.map((s) => s.typeName).join(','));
+  // Three of the four entries are gzipped, and every one should still carry heart rate.
+  assert(d.sessions.every((s) => s.hr.length > 10),
+    `heart rate counts: ${d.sessions.map((s) => s.hr.length).join(',')}`);
+  const noise = d.warnings.filter((w) => /profile|comments|followers|clubs|jpg/i.test(w));
+  assert(noise.length === 0, `complained about archive furniture: ${noise.join(' | ')}`);
+  return `${d.sessions.length} activities, ${d.sessions.reduce((a, s) => a + s.hr.length, 0)} heart rate readings`;
+});
+
 await check('the date range and session picker work on the real page', async () => {
   const res = await fixture('tests/fixtures/health_connect_export.zip');
   const blob = await res.blob();

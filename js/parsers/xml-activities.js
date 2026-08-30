@@ -11,8 +11,19 @@ import { decodeExerciseType, modalityFor } from './exercise-types.js';
 const NS_TPX = 'http://www.garmin.com/xmlschemas/ActivityExtension/v2';
 
 function parseXml(text, what) {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  const err = doc.querySelector('parsererror');
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(text, 'application/xml');
+  } catch (e) {
+    // Some implementations throw on malformed input where a browser reports it in the document.
+    throw new Error(`This ${what} file could not be parsed: ${e.message}`);
+  }
+  if (!doc || !doc.documentElement) {
+    throw new Error(`This ${what} file could not be parsed: it produced no document.`);
+  }
+  // getElementsByTagName rather than querySelector, because the latter is absent from some
+  // non-browser DOM implementations and this module is exercised outside a browser in tests.
+  const err = doc.getElementsByTagName('parsererror')[0];
   if (err) throw new Error(`This ${what} file could not be parsed: ${err.textContent.trim()}`);
   return doc;
 }

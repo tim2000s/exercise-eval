@@ -10,6 +10,7 @@ import { unzipSync, unzip } from '../vendor/fflate.js';
 import { detectFormat } from './parsers/detect.js';
 import { parseHealthConnectDb, isSqlite } from './parsers/healthconnect-sqlite.js';
 import { parseCsvSessions, parseJsonSessions } from './parsers/tabular.js';
+import { parseArchive } from './parsers/archive.js';
 import { parseFit } from './parsers/fit.js';
 import { parseGpx, parseTcx } from './parsers/xml-activities.js';
 
@@ -124,45 +125,7 @@ async function importZip(bytes, filename, onProgress) {
     return importSqlite(entries[dbName], onProgress);
   }
 
-  // A Strava or Garmin archive: one file per activity, plus a summary CSV. Each activity is
-  // parsed and the results are merged, since the tool works in sessions rather than files.
-  const merged = { ...EMPTY, source: 'archive', sessions: [], warnings: [] };
-  let failed = 0;
-
-  for (const name of names) {
-    const lower = name.toLowerCase();
-    try {
-      if (lower.endsWith('.fit')) merged.sessions.push(...parseFit(entries[name]).sessions);
-      else if (lower.endsWith('.gpx')) merged.sessions.push(...parseGpx(decode(entries[name])).sessions);
-      else if (lower.endsWith('.tcx')) merged.sessions.push(...parseTcx(decode(entries[name])).sessions);
-      else if (lower.endsWith('activities.csv')) {
-        const r = parseCsvSessions(decode(entries[name]));
-        // The summary CSV duplicates the per-activity files, so it is only used when no
-        // per-activity file was readable. Counting both would double every session.
-        merged.meta.summaryCsv = r;
-      }
-    } catch (e) {
-      failed++;
-      if (failed <= 3) merged.warnings.push(`${name} could not be read: ${e.message}`);
-    }
-  }
-
-  if (!merged.sessions.length && merged.meta.summaryCsv?.sessions.length) {
-    onProgress('No per-activity files were readable, so the summary CSV was used instead.');
-    return merged.meta.summaryCsv;
-  }
-  if (failed > 3) {
-    merged.warnings.push(`${failed} files in the archive could not be read.`);
-  }
-  if (!merged.sessions.length) {
-    merged.warnings.push(
-      'No activity files were found in this archive. Supported entries are .fit, .gpx and ' +
-        '.tcx, or a Health Connect database.',
-    );
-  }
-  // Archives are not ordered, and later stages assume sessions run forwards in time.
-  merged.sessions.sort((a, b) => a.start - b.start);
-  return merged;
+  return parseArchive(entries, onProgress);
 }
 
 async function importSqlite(bytes, onProgress) {

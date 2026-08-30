@@ -105,6 +105,29 @@ const STRING_ALIASES = {
   pull_up: 'CALISTHENICS', push_up: 'CALISTHENICS', sit_up: 'CALISTHENICS',
   // Preserved typo in the Wear Health Services string set, commented as such in androidx source.
   para_gliding: 'PARAGLIDING',
+
+  // Strava's sport_type vocabulary, which shares almost none of its spellings with Health
+  // Connect. These arrive from a Strava export's activities.csv, from the type element of a
+  // Strava GPX, and from the API if one is ever connected.
+  ride: 'BIKING', virtualride: 'BIKING_STATIONARY', ebikeride: 'BIKING',
+  gravelride: 'BIKING', mountainbikeride: 'BIKING', velomobile: 'BIKING',
+  handcycle: 'BIKING',
+  run: 'RUNNING', virtualrun: 'RUNNING_TREADMILL', trailrun: 'RUNNING',
+  walk: 'WALKING', hike: 'HIKING',
+  swim: 'SWIMMING_POOL', openwaterswim: 'SWIMMING_OPEN_WATER',
+  weighttraining: 'STRENGTH_TRAINING', workout: 'OTHER_WORKOUT', crossfit: 'CALISTHENICS',
+  elliptical: 'ELLIPTICAL', stairstepper: 'STAIR_CLIMBING_MACHINE',
+  rowing: 'ROWING', virtualrow: 'ROWING_MACHINE', kayaking: 'PADDLING', canoeing: 'PADDLING',
+  standuppaddling: 'PADDLING', surfing: 'SURFING', kitesurf: 'SURFING', windsurf: 'SAILING',
+  sail: 'SAILING', rockclimbing: 'ROCK_CLIMBING',
+  alpineski: 'SKIING', backcountryski: 'SKIING', nordicski: 'SKIING', snowboard: 'SNOWBOARDING',
+  snowshoe: 'SNOWSHOEING', iceskate: 'ICE_SKATING', inlineskate: 'SKATING',
+  soccer: 'SOCCER', badminton: 'BADMINTON', tennis: 'TENNIS', squash: 'SQUASH',
+  tabletennis: 'TABLE_TENNIS', racquetball: 'RACQUETBALL', pickleball: 'RACQUETBALL',
+  golf: 'GOLF', yoga: 'YOGA', pilates: 'PILATES', wheelchair: 'WHEELCHAIR',
+  hiit: 'HIGH_INTENSITY_INTERVAL_TRAINING',
+  // Strava has no Health Connect equivalent for these, so they stay unknown deliberately.
+  // skateboard, snowmobile, wintersport, watersport and similar fall through.
 };
 
 const CANONICAL = new Set(TYPE_TABLE.map(([, , n]) => n));

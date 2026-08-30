@@ -10,7 +10,8 @@
     "fixtures": "python3 tools/make_fixture.py && python3 tools/make_fit_fixture.py"
   },
   "devDependencies": {
-    "sql.js": "1.13.0",
-    "fflate": "0.8.2"
+    "@xmldom/xmldom": "^0.9.12",
+    "fflate": "0.8.2",
+    "sql.js": "1.13.0"
   }
 }

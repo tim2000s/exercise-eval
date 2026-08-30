@@ -10,7 +10,8 @@ import { decodeExerciseType, modalityFor } from './exercise-types.js';
 /** Column synonyms, lowercased and stripped of spaces, underscores and punctuation. */
 const SYNONYMS = {
   start: ['start', 'starttime', 'startdate', 'startdatetime', 'begin', 'begintime', 'from',
-    'datetimestart', 'localstarttime', 'startlocal', 'date', 'timestamp'],
+    'datetimestart', 'localstarttime', 'startlocal', 'date', 'timestamp',
+    'activitydate', 'workoutdate', 'sessiondate'],
   end: ['end', 'endtime', 'enddate', 'enddatetime', 'finish', 'finishtime', 'to',
     'datetimeend', 'localendtime', 'endlocal'],
   duration: ['duration', 'durationms', 'durations', 'durationmin', 'durationminutes',
@@ -70,7 +71,25 @@ export function parseTimestamp(value) {
   }
   const s = String(value).trim();
   const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(s);
-  const ms = Date.parse(hasZone ? s : s.replace(' ', 'T'));
+
+  // Try the string as the exporter wrote it. This handles ISO 8601 and the human formats
+  // Strava and Garmin use, such as "Aug 3, 2026, 5:00:00 PM" and "3 Aug 2026, 17:00:00".
+  let ms = Date.parse(s);
+
+  // Only if that fails, treat it as ISO 8601 with a space where the T should be. An earlier
+  // version did this substitution unconditionally, which turned the Strava format into
+  // "AugT3, 2026, ..." and produced an unreadable date from a perfectly readable one.
+  if (Number.isNaN(ms) && /^\d{4}-\d{2}-\d{2}[ T]/.test(s)) {
+    ms = Date.parse(s.replace(' ', 'T'));
+  }
+  // A day-first format with slashes or dots, which Date.parse reads as month-first or not at
+  // all. Only rewritten where the first field cannot be a month.
+  if (Number.isNaN(ms)) {
+    const m = s.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})(.*)$/);
+    if (m && Number(m[1]) > 12) {
+      ms = Date.parse(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}${m[4] ? 'T' + m[4].trim() : ''}`);
+    }
+  }
   return { ms: Number.isNaN(ms) ? null : ms, assumedLocal: !hasZone };
 }
 
